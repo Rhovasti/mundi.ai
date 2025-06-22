@@ -1,0 +1,36 @@
+# Development-specific Docker Compose overrides
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  app:
+    # Enable hot reload for development
+    volumes:
+      - ./src:/app/src:cached
+      - ./alembic:/app/alembic:cached
+      - ./frontendts/src:/app/frontendts/src:cached
+    environment:
+      # Development-specific environment variables
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DEBUG=1
+      - LOG_LEVEL=debug
+    # Override command for development with auto-reload
+    command: uvicorn src.wsgi:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+  # Expose ports for development access to supporting services
+  minio:
+    ports:
+      - "9000:9000"  # MinIO API
+      - "9001:9001"  # MinIO Console
+  
+  postgresdb:
+    ports:
+      - "5432:5432"  # PostgreSQL
+  
+  redis:
+    ports:
+      - "6379:6379"  # Redis
+  
+  driftdb:
+    ports:
+      - "8080:8080"  # DriftDB
