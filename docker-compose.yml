@@ -33,7 +33,6 @@ services:
       - DRIFTDB_SERVER_URL=http://driftdb:8080
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - OPENAI_API_KEY=$OPENAI_API_KEY
       - POSTGRES_HOST=postgresdb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=mundidb
@@ -41,9 +40,9 @@ services:
       - POSTGRES_PASSWORD=gdalpassword
       - PYTHONUNBUFFERED=1
       - PYTHONIOENCODING=utf-8
-      # - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
-      # - OPENAI_API_KEY=ollama
-      # - OPENAI_MODEL=orieg/gemma3-tools:1b
+      - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+      - OPENAI_API_KEY=ollama
+      - OPENAI_MODEL=orieg/gemma3-tools:1b
     command: uvicorn src.wsgi:app --host 0.0.0.0 --port 8000 --log-level debug --access-log --use-colors
     volumes:
       - ./src:/app/src
