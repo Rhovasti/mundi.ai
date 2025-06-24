@@ -160,6 +160,25 @@ export default function ProjectView() {
     );
   }
 
+  // Determine the correct DriftDB API URL
+  const getDriftApiUrl = () => {
+    // Use the drift endpoint with explicit port to avoid port 5173 issue
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    const host = window.location.host;
+    
+    let apiUrl;
+    // For localhost:8000, use absolute URL with drift endpoint
+    if (host === 'localhost:8000' || host.includes(':8000')) {
+      apiUrl = `${protocol}//localhost:8000/drift/`;
+    } else {
+      // For other hosts, use relative path
+      apiUrl = "/drift/";
+    }
+    
+    console.log('DriftDB API URL:', apiUrl, 'Current host:', host);
+    return apiUrl;
+  };
+
   return (
     <div
       {...getRootProps()}
@@ -170,7 +189,7 @@ export default function ProjectView() {
 
       {/* Interactive Map Section */}
       {roomId && project ? (
-        <DriftDBProvider api="/drift/" room={roomId}>
+        <DriftDBProvider api={getDriftApiUrl()} room={roomId}>
           <MapLibreMap
             mapId={versionId}
             height="100%"

@@ -35,6 +35,37 @@ from sqlalchemy.orm import relationship
 Base = declarative_base()
 
 
+class WorldModel(Base):
+    __tablename__ = "world_models"
+
+    id = Column(String(12), primary_key=True)  # 12-char unique ID, starts with W
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    planet_scale_factor = Column(Float, default=1.0)  # 0.1x to 3.5x Earth size
+    extent_bounds = Column(ARRAY(Float))  # [west, south, east, north] in WGS84
+    crs_definition = Column(Text)  # Custom CRS definition (PROJ4 or WKT)
+    transformation_matrix = Column(ARRAY(Float))  # 6-parameter affine transformation
+    default_center = Column(ARRAY(Float))  # [lng, lat] default map center
+    default_zoom = Column(Integer, default=2)
+    earth_radius = Column(Float)  # Custom planet radius in meters
+    coordinate_system_notes = Column(Text)  # Documentation about the coordinate system
+    is_default = Column(Boolean, default=False)  # Whether this is a default world model
+    is_public = Column(Boolean, default=True)  # Whether world model is publicly accessible
+    owner_uuid = Column(UUID, nullable=False)
+    metadata_json = Column(JSONB)  # Additional world model configuration
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.current_timestamp()
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True), 
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp()
+    )
+
+    # Relationship to basemaps
+    basemaps = relationship("CustomBasemap", back_populates="world_model")
+
+
 class UserMundiaiProject(Base):
     __tablename__ = "user_mundiai_projects"
 
@@ -269,3 +300,38 @@ class ChatCompletionMessage(Base):
 
     # Relationships
     map = relationship("UserMundiaiMap", back_populates="chat_completion_messages")
+
+
+class CustomBasemap(Base):
+    __tablename__ = "custom_basemaps"
+
+    id = Column(String(12), primary_key=True)  # 12-char unique ID, starts with B
+    owner_uuid = Column(UUID, nullable=False)
+    name = Column(String, nullable=False)
+    tile_url_template = Column(Text, nullable=False)  # URL template with {z}/{x}/{y}
+    tile_format = Column(String, default="png")  # png, jpg, webp
+    min_zoom = Column(Integer, default=0)
+    max_zoom = Column(Integer, default=22)
+    tile_size = Column(Integer, default=256)
+    attribution = Column(Text, default="")
+    bounds = Column(ARRAY(Float))  # [west, south, east, north]
+    center = Column(ARRAY(Float))  # [lng, lat]
+    default_zoom = Column(Integer)
+    is_public = Column(Boolean, default=False)  # Whether basemap is publicly accessible
+    metadata_json = Column(JSONB)  # Additional configuration
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.current_timestamp()
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True), 
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp()
+    )
+    
+    # World model integration
+    world_model_id = Column(String(12), ForeignKey("world_models.id"), nullable=True)
+    georeferencing_points = Column(JSONB)  # Ground Control Points for alignment
+    transform_matrix = Column(ARRAY(Float))  # Local transformation matrix for this basemap
+    
+    # Relationship to world model
+    world_model = relationship("WorldModel", back_populates="basemaps")

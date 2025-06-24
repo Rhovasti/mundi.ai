@@ -30,6 +30,11 @@ from src.routes import (
     postgres_routes,
     room_routes,
     message_routes,
+    basemap_routes,
+    world_model_routes,
+    demo_map,
+    demo_map_debug,
+    eno_vector_routes,
 )
 from src.routes.postgres_routes import layer_router
 
@@ -83,6 +88,26 @@ app.include_router(
     prefix="/api/projects",
     tags=["Projects"],
 )
+app.include_router(
+    basemap_routes.router,
+    tags=["Basemaps"],
+)
+app.include_router(
+    world_model_routes.router,
+    tags=["World Models"],
+)
+app.include_router(
+    demo_map.router,
+    tags=["Demo"],
+)
+app.include_router(
+    demo_map_debug.router,
+    tags=["Demo"],
+)
+app.include_router(
+    eno_vector_routes.router,
+    tags=["Eno Vector Data"],
+)
 
 
 # Create a combined proxy router for DriftDB that handles both HTTP and WebSocket
@@ -117,6 +142,7 @@ mcp.mount()
 
 # First mount specific static assets to ensure they're properly served
 app.mount("/assets", StaticFiles(directory="frontendts/dist/assets"), name="spa-assets")
+app.mount("/fonts", StaticFiles(directory="frontendts/dist/fonts"), name="spa-fonts")
 
 
 @app.post("/supertokens/session/refresh")

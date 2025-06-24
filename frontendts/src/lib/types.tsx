@@ -95,3 +95,46 @@ export interface EphemeralAction {
   bounds?: [number, number, number, number];
   description?: string;
 }
+
+export interface CustomBasemap {
+  id: string;
+  name: string;
+  tile_url_template: string;
+  tile_format: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  attribution: string;
+  bounds?: [number, number, number, number] | null;
+  center?: [number, number] | null;
+  default_zoom?: number | null;
+  is_public: boolean;
+  metadata?: any;
+  owner_uuid: string;
+  created_at: string;
+  updated_at: string;
+  type?: 'raster' | 'vector'; // Derived field
+  world_model_id?: string | null;
+  georeferencing_points?: any[] | null;
+  transform_matrix?: number[] | null;
+}
+
+export interface WorldModel {
+  id: string;
+  name: string;
+  description?: string | null;
+  planet_scale_factor: number;
+  extent_bounds?: [number, number, number, number] | null;
+  crs_definition?: string | null;
+  transformation_matrix?: number[] | null;
+  default_center?: [number, number] | null;
+  default_zoom: number;
+  earth_radius?: number | null;
+  coordinate_system_notes?: string | null;
+  is_default: boolean;
+  is_public: boolean;
+  owner_uuid: string;
+  metadata?: any;
+  created_at: string;
+  updated_at: string;
+}

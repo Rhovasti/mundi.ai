@@ -5,3 +5,7 @@ test_output
 data
 src/conftest.py
 *.aux.xml
+# Fantasy world geospatial data (too large for git)
+Eno/
+# Examples and screenshots
+examples/
