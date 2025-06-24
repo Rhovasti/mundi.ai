@@ -1,6 +1,6 @@
-# Mundi Fork
+# Eno-Mundi
 
-> **Note**: This is a fork of [BuntingLabs/mundi.ai](https://github.com/BuntingLabs/mundi.ai) - an open source, AI-native web GIS platform. All credit for the original work goes to BuntingLabs and contributors.
+> **Fantasy World GIS Platform**: Built on [BuntingLabs/mundi.ai](https://github.com/BuntingLabs/mundi.ai), Eno-Mundi is a specialized GIS platform for exploring the Eno fantasy world with interactive maps, detailed geography, and AI-native features. All credit for the original Mundi platform goes to BuntingLabs and contributors.
 
 <h4 align="center">
   <a href="https://github.com/BuntingLabs/mundi.ai/actions/workflows/cicd.yml">
@@ -28,9 +28,9 @@
 
 ### Get Started
 ```bash
-# Clone this fork
-git clone https://github.com/Rhovasti/mundi.ai.git
-cd mundi.ai
+# Clone the Eno-Mundi repository
+git clone https://github.com/Rhovasti/Eno-Mundi.git
+cd Eno-Mundi
 
 # Initialize submodules
 git submodule update --init --recursive
@@ -43,7 +43,13 @@ docker compose build
 docker compose up app
 ```
 
-Access Mundi at **http://localhost:8000**
+Access Eno-Mundi at **http://localhost:8000**
+
+### Exploring the Eno Fantasy World
+Once running, navigate to the Eno project:
+- **Main Eno Map**: http://localhost:8000/project/BxvFhuzMcnuy
+- **Features**: Interactive fantasy geography with cities, villages, rivers, lakes, biomes, and roads
+- **Coordinate System**: Professional EPSG:3857 (Web Mercator) projection with proper alignment
 
 ### Development Mode
 ```bash
@@ -51,35 +57,61 @@ Access Mundi at **http://localhost:8000**
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml up app
 ```
 
-## 🔗 Fork Information
+## 🌍 Eno Fantasy World Features
 
-- **Original Repository**: [BuntingLabs/mundi.ai](https://github.com/BuntingLabs/mundi.ai)
-- **Fork Purpose**: Enhanced development environment and additional features
+### Geographic Data
+- **Custom Relief Map**: High-resolution topographic imagery of the Eno world
+- **Fantasy Cities**: Major settlements with detailed population and cultural data
+- **Villages**: Smaller communities scattered across the landscape  
+- **Natural Features**: Rivers, lakes, and diverse biomes
+- **Infrastructure**: Road networks connecting settlements
+- **Political Boundaries**: States and regions with fantasy governance
+
+### Technical Specifications
+- **Coordinate System**: EPSG:3857 (Web Mercator) for web compatibility
+- **Vector Data**: GeoJSON format with proper georeferencing
+- **Basemap Provider**: MapTiler integration (temporary solution)
+- **Future Plans**: Migration to self-hosted tile server for full open-source solution
+
+## 🔗 Project Information
+
+- **Based On**: [BuntingLabs/mundi.ai](https://github.com/BuntingLabs/mundi.ai)
+- **Purpose**: Fantasy world GIS platform for the Eno universe
 - **License**: AGPLv3 (maintained from original)
 - **Attribution**: Full credit to BuntingLabs for the original Mundi.ai platform
 
 ## Documentation
 
-Get started with Mundi using our guides:
+### Eno-Mundi Specific
+- **Main Project URL**: http://localhost:8000/project/BxvFhuzMcnuy
+- **API Endpoints**: 
+  - Vector layers: `http://localhost:8000/api/eno/vector`
+  - Cities: `http://localhost:8000/api/eno/vector/cities`
+  - Rivers: `http://localhost:8000/api/eno/vector/rivers`
+  - And more...
 
+### Original Mundi Documentation
+For general platform guidance:
 - [Making your first map](https://docs.mundi.ai/getting-started/making-your-first-map/)
 - [Self-hosting Mundi](https://docs.mundi.ai/guides/self-hosting-mundi/)
 - [Connecting to PostGIS](https://docs.mundi.ai/guides/connecting-to-postgis/)
 
 Find more at [docs.mundi.ai](https://docs.mundi.ai).
 
-## Comparing open source Mundi and cloud/enterprise Mundi
+## Technical Architecture
 
-Mundi has both open source and cloud/enterprise versions. This is because we think the future
-of GIS software is open source and AI-native, while enabling corporations to sponsor its development.
+### Current Implementation
+- **Backend**: Python/FastAPI with PostgreSQL + PostGIS
+- **Frontend**: React 18 + TypeScript + MapLibre GL
+- **Coordinate System**: EPSG:3857 (Web Mercator)
+- **Vector Data**: GeoJSON with proper georeferencing
+- **Basemap**: MapTiler (temporary proprietary solution)
 
-|                        | Open source Mundi        | Mundi Cloud / Enterprise         |
-|------------------------|--------------------------|----------------------------------|
-| Third-party services   | None                     | Integrated                       |
-| Optimized for          | Local/open LLMs          | Frontier & proprietary models    |
-| Multiplayer?           | Single player            | Team collaboration               |
-| Support                | Community                | SLAs available                   |
-| License                | AGPLv3                   | Commercial                       |
+### Future Roadmap
+- **Self-hosted Tiles**: Replace MapTiler with open-source tile server
+- **Local Coordinate Pipeline**: Implement transformation from original Eno data
+- **Enhanced Fantasy Features**: Expanded world-building tools and AI integration
+- **Performance Optimization**: Improved loading for large fantasy datasets
 
 ## License
 

@@ -4,11 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mundi is an AI-native GIS (Geographic Information System) platform built with:
+**Eno-Mundi** is an AI-native GIS (Geographic Information System) platform specifically designed for the Eno fantasy world, built with:
 - **Backend**: Python/FastAPI with async support, GDAL for geospatial operations
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS
 - **Databases**: PostgreSQL with PostGIS, Redis, MinIO (S3-compatible)
 - **Real-time**: DriftDB for collaborative map editing
+
+### Eno Fantasy World Features
+- **Custom Basemap**: Professional relief and satellite imagery of the Eno world
+- **Fantasy Geography**: Cities, villages, rivers, lakes, biomes, and roads specific to Eno
+- **Coordinate System**: Properly georeferenced EPSG:3857 (Web Mercator) projection
+- **MapTiler Integration**: Temporary solution for professional coordinate alignment
+- **Multi-layer Visualization**: Interactive fantasy world exploration with detailed vector data
 
 ## Essential Commands
 

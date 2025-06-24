@@ -858,6 +858,10 @@ async def get_map_style(
                     headers={"WWW-Authenticate": "Bearer"},
                 )
 
+    # Use dynamic base map provider selection for better coordinate alignment
+    from ..dependencies.base_map import get_base_map_provider_for_map
+    base_map = await get_base_map_provider_for_map(map_id)
+
     return await get_map_style_internal(
         map_id, base_map, only_show_inline_sources, override_layers
     )

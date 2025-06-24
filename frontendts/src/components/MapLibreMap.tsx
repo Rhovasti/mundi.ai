@@ -56,6 +56,8 @@ import { useNavigate } from 'react-router-dom';
 import type { ChatCompletionMessageParam, ChatCompletionUserMessageParam, ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
 import { Activity, Brain, Database, Send } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { CoordinateDisplay } from './CoordinateDisplay';
+import { LayerControl } from './LayerControl';
 
 
 // Define the type for chat completion messages from the database
@@ -750,6 +752,20 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
   const [zoomHistory, setZoomHistory] = useState<Array<{bounds: [number, number, number, number];}>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
+  // Hardcoded Eno basemap configuration
+  const ENO_BASEMAP = {
+    id: 'BUlJVMxOuaEK',
+    name: 'Eno Relief Map',
+    tile_url_template: 'file:///app/Eno/tif/relief_preview.png',
+    tile_format: 'png',
+    min_zoom: 0,
+    max_zoom: 18,
+    type: 'image' as const,
+    bounds: [-73.312, -92.897, 117.287, 98.423],
+    center: [21.9875, 2.763],
+    default_zoom: 3,
+    attribution: '© Eno Fantasy World'
+  };
 
 
 
@@ -1053,6 +1069,166 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     });
   }
 
+  // Initialize Eno vector layers (basemap provided by MapTiler backend)
+  const initializeEnoVectorLayers = async (map: Map) => {
+    try {
+      console.log('Adding Eno vector layers to MapTiler basemap...');
+      
+      // MapTiler provides the basemap - we only add vector layers on top
+      const vectorLayers = [
+        {
+          id: 'rivers',
+          name: 'Rivers',
+          type: 'line',
+          paint: {
+            'line-color': '#4a90e2',
+            'line-width': 2,
+            'line-opacity': 0.8
+          }
+        },
+        {
+          id: 'lakes',
+          name: 'Lakes',
+          type: 'fill',
+          paint: {
+            'fill-color': '#6bb6ff',
+            'fill-opacity': 0.6,
+            'fill-outline-color': '#4a90e2'
+          }
+        },
+        {
+          id: 'biomes',
+          name: 'Biomes',
+          type: 'fill',
+          paint: {
+            'fill-color': [
+              'case',
+              ['==', ['get', 'name'], 'Forest'], '#2ecc71',
+              ['==', ['get', 'name'], 'Desert'], '#f39c12',
+              ['==', ['get', 'name'], 'Mountains'], '#95a5a6',
+              ['==', ['get', 'name'], 'Grassland'], '#58d68d',
+              '#e67e22'
+            ],
+            'fill-opacity': 0.3
+          }
+        },
+        {
+          id: 'roads',
+          name: 'Roads',
+          type: 'line',
+          paint: {
+            'line-color': '#8b4513',
+            'line-width': 1,
+            'line-opacity': 0.7
+          }
+        },
+        {
+          id: 'villages',
+          name: 'Villages',
+          type: 'circle',
+          paint: {
+            'circle-radius': 3,
+            'circle-color': '#ffa500',
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1,
+            'circle-opacity': 0.8
+          }
+        }
+      ];
+
+      // Add vector layer sources and layers
+      for (const layer of vectorLayers) {
+        try {
+          map.addSource(`eno-${layer.id}`, {
+            type: 'geojson',
+            data: `/api/eno/vector/${layer.id}`
+          });
+
+          map.addLayer({
+            id: `eno-${layer.id}-layer`,
+            type: layer.type as any,
+            source: `eno-${layer.id}`,
+            paint: layer.paint,
+            layout: {
+              visibility: 'visible'
+            }
+          });
+
+          console.log(`Added Eno ${layer.name} layer`);
+        } catch (err) {
+          console.warn(`Failed to add ${layer.name} layer:`, err);
+        }
+      }
+
+      // Add the Eno cities GeoJSON source
+      map.addSource('eno-cities', {
+        type: 'geojson',
+        data: '/api/eno/vector/cities'
+      });
+
+      // Add cities layer with points
+      map.addLayer({
+        id: 'eno-cities-layer',
+        type: 'circle',
+        source: 'eno-cities',
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['get', 'Population'],
+            0, 4,
+            10000, 6,
+            50000, 10,
+            100000, 14
+          ],
+          'circle-color': [
+            'case',
+            ['==', ['get', 'Capital'], 'capital'], '#e74c3c',
+            ['==', ['get', 'Port'], 'port'], '#3498db',
+            '#ff6b6b'
+          ],
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+          'circle-opacity': 0.8
+        }
+      });
+
+      // Add city labels
+      map.addLayer({
+        id: 'eno-cities-labels',
+        type: 'symbol',
+        source: 'eno-cities',
+        layout: {
+          'text-field': ['get', 'Burg'],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-offset': [0, 1.5],
+          'text-anchor': 'top',
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['get', 'Population'],
+            0, 10,
+            10000, 12,
+            50000, 14,
+            100000, 16
+          ]
+        },
+        paint: {
+          'text-color': '#2c3e50',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 1
+        }
+      });
+
+      // Let the backend EnoWorldProvider handle initial map view
+
+      console.log('Eno basemap and vector layers initialized successfully');
+    } catch (error) {
+      console.error('Error initializing Eno basemap:', error);
+      addError('Failed to initialize Eno basemap: ' + (error instanceof Error ? error.message : String(error)), true);
+    }
+  };
+
   // Separate effect for map initialization (only runs once)
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -1068,7 +1244,14 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         }, // Start with empty style so map loads
         attributionControl: {
           compact: false
-        }
+        },
+        // Disable the "fadeDuration" to prevent projection transitions
+        fadeDuration: 0,
+        // Set initial bounds to prevent auto-centering on world coordinates
+        center: [0, 0],
+        zoom: 1,
+        // Disable the world-wrap for fantasy maps
+        renderWorldCopies: false
       };
 
       const newMap = new Map(mapOptions);
@@ -1088,6 +1271,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           newMap.addImage('remote-cursor', cursorImage);
         };
         cursorImage.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAIRSURBVHgB7dnNsdowFAXgQ5INO9OBt9m5BKUDOsAl0AHuIO4AUgF0YKgAOrCpwLDL7kbnPUHAETEY8yy98TejsWf8fnQsc3UBoNfr9WrkZoTwnMxmM8EnCCP0GcLIyXw+P4WJ4CG5tFwuZTQalfAwjFRtt1sJgoCrM4FHxCbPcwnDkGGm8ITcchFmBg/I//gURur4EkbuUZalRFHEMD/hKLkXw4zHY4aZw0HyqMlkwjBbPQI4RJowLQ3DhHCENOVafybPcCmMPMuVMNIGFzpnaUvXnbO0qcvOWdrWVecsr9BFfyav0iTMAM3xf+JZh8PhPIqieDvu93vsdjusVqu75/gNH2iz2SBN0/OEzTjoS6dRmOPeHHf4APIodsH8PT0U3jfB1prHL3gR3nXzaJzp8oo4jnmq8Pfud672xcpRlWUZV4SbnzOtvDXExcYW65Fx4lVKqdN1J1hDmFZjbH4m5qRvrEoGR1xNbrFY2PolPj4lA95YFQUHXIXA7Q42mU6nTq/K24SSJKl7TxFwpVh6q8zurdCCr2guGQwG0EEKff4D7+XU5rf2fTgcRvpxurpwPB6xXq9DffoLHXrkGyvFSlbFVTIV7p6/4QxrKTaPZgqPKFsp5qqYaufUZ111StuqsKrpawk8Yi3FbGngWNtS559SzBUym2MOz6R8gfNjIBOAm2IMD3H3591nAIVez21/ACUSSP4DF2G8AAAAAElFTkSuQmCC";
+
+        // Initialize Eno basemap automatically
+        initializeEnoVectorLayers(newMap);
 
         setLoading(false);
       });
@@ -1283,7 +1469,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     if (!mapId || !jwt)
       return null;
 
-    return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
+    // In development, connect directly to backend WebSocket server
+    const wsHost = process.env.NODE_ENV === 'development' 
+      ? 'localhost:8000' 
+      : window.location.host;
+    
+    return `${wsProtocol}//${wsHost}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
   }, [mapId, wsProtocol, jwt]);
 
   const { lastMessage, readyState } = useWebSocket(wsUrl, {
@@ -1493,6 +1684,14 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             setZoomHistoryIndex={setZoomHistoryIndex}
           />
         )}
+
+        {/* Eno World Indicator */}
+        <div className="absolute top-4 right-4 z-30">
+          <div className="bg-black bg-opacity-60 text-white px-3 py-2 rounded-lg text-sm">
+            🗺️ Eno Fantasy World
+          </div>
+        </div>
+
         {/* Changelog */}
         {/* Apply flex flex-col justify-end to CommandList to anchor items to the bottom */}
         <Command className="z-30 absolute bottom-4 left-4 max-h-[18vh] hover:max-h-[70vh] transition-all duration-300 ring ring-black hover:ring-white max-w-72 overflow-auto py-2 rounded-sm bg-white dark:bg-gray-800 shadow-md">
@@ -1690,6 +1889,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           })}
         </div>
       </div>}
+
+      {/* Layer Control */}
+      <LayerControl mapRef={mapRef} />
+
+      {/* Coordinate Display Overlay */}
+      <CoordinateDisplay mapRef={mapRef} />
     </>
   );
 }
