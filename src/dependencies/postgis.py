@@ -13,20 +13,41 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import asyncpg
+import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from .postgres_connection import PostgresConnectionManager
+from redis import Redis
+
+redis = Redis(
+    host=os.environ["REDIS_HOST"],
+    port=int(os.environ["REDIS_PORT"]),
+    decode_responses=True,
+)
 
 
 class PostGISProvider(ABC):
     @abstractmethod
-    async def __call__(self, connection_uri: str) -> str:
+    async def get_tables_by_connection_id(
+        self, connection_id: str, connection_manager: PostgresConnectionManager
+    ) -> str:
         pass
 
 
 class DefaultPostGISProvider(PostGISProvider):
-    async def __call__(self, connection_uri: str) -> str:
-        postgres_conn = await asyncpg.connect(connection_uri)
+    async def get_tables_by_connection_id(
+        self, connection_id: str, connection_manager: PostgresConnectionManager
+    ) -> str:
+        cache_key = f"postgis:{connection_id}:tables"
+
+        try:
+            cached_result = redis.get(cache_key)
+            if cached_result:
+                return cached_result
+        except Exception:
+            pass
+
+        postgres_conn = await connection_manager.connect_to_postgres(connection_id)
         try:
             tables = await postgres_conn.fetch("""
                 SELECT
@@ -38,7 +59,14 @@ class DefaultPostGISProvider(PostGISProvider):
                 ORDER BY t.table_schema, t.table_name
             """)
 
-            return str([dict(table) for table in tables])
+            result = str([dict(table) for table in tables])
+
+            try:
+                redis.setex(cache_key, 3600, result)
+            except Exception:
+                pass
+
+            return result
         finally:
             await postgres_conn.close()
 

@@ -1,6 +1,6 @@
 // Copyright Bunting Labs, Inc. 2025
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Map, NavigationControl, ScaleControl, MapOptions } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl, MapOptions, IControl } from 'maplibre-gl';
 import Session from "supertokens-auth-react/recipe/session";
 import { useConnectionStatus, usePresence } from 'driftdb-react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
@@ -37,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
+import { BookOpenText, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -69,11 +69,86 @@ interface ChatCompletionMessageRow {
 
 // Import styles in the parent component
 
+// Custom Globe Control class
+class GlobeControl implements IControl {
+  private _container: HTMLDivElement | undefined;
+  private _availableBasemaps: string[];
+  private _currentBasemap: string;
+  private _onBasemapChange: (basemap: string) => void;
+
+  constructor(availableBasemaps: string[], currentBasemap: string, onBasemapChange: (basemap: string) => void) {
+    this._availableBasemaps = availableBasemaps;
+    this._currentBasemap = currentBasemap;
+    this._onBasemapChange = onBasemapChange;
+  }
+
+  onAdd(_map: Map): HTMLElement {
+    this._container = document.createElement('div');
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+    const button = document.createElement('button');
+    button.className = 'maplibregl-ctrl-globe';
+    button.type = 'button';
+    button.title = 'Toggle satellite basemap';
+    button.setAttribute('aria-label', 'Toggle satellite basemap');
+
+    // Create globe icon (SVG)
+    button.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#333">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+      </svg>
+    `;
+    button.style.border = 'none';
+    button.style.background = 'transparent';
+    button.style.cursor = 'pointer';
+    button.style.padding = '5px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+
+    button.addEventListener('click', this._onClickGlobe.bind(this));
+
+    this._container.appendChild(button);
+    return this._container;
+  }
+
+  onRemove(): void {
+    if (this._container && this._container.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+  }
+
+  private _onClickGlobe(): void {
+    if (!this._availableBasemaps.length) return;
+
+    // Cycle to next basemap
+    const currentIndex = this._availableBasemaps.indexOf(this._currentBasemap);
+    const nextIndex = (currentIndex + 1) % this._availableBasemaps.length;
+    const nextBasemap = this._availableBasemaps[nextIndex];
+
+    this._currentBasemap = nextBasemap;
+    this._onBasemapChange(nextBasemap);
+  }
+
+  updateBasemap(basemap: string): void {
+    this._currentBasemap = basemap;
+  }
+}
+
 interface ErrorEntry {
   id: string;
   message: string;
   timestamp: Date;
   shouldOverrideMessages: boolean;
+}
+
+// Add interface for tracking upload progress
+interface UploadingFile {
+  id: string;
+  file: File;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
 }
 
 interface MapLibreMapProps {
@@ -86,6 +161,7 @@ interface MapLibreMapProps {
   openDropzone?: () => void;
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
+  uploadingFiles?: UploadingFile[];
 }
 interface LayerWithStatus extends MapLayer {
   status: 'added' | 'removed' | 'edited' | 'existing';
@@ -106,9 +182,10 @@ interface LayerListProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
-  zoomHistory: Array<{bounds: [number, number, number, number];}>;
+  zoomHistory: Array<{ bounds: [number, number, number, number]; }>;
   zoomHistoryIndex: number;
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
+  uploadingFiles?: UploadingFile[];
 }
 
 function renderTree(tree: RenderElement | null): JSX.Element | null {
@@ -138,6 +215,7 @@ const LayerList: React.FC<LayerListProps> = ({
   zoomHistory,
   zoomHistoryIndex,
   setZoomHistoryIndex,
+  uploadingFiles,
 }) => {
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
@@ -328,7 +406,7 @@ const LayerList: React.FC<LayerListProps> = ({
       </CardHeader>
       <CardContent className="px-0">
         {processedLayers.length > 0 ? (
-          <ul className="space-y-1 text-sm">
+          <ul className="text-sm">
             {processedLayers.map(layerWithStatus => {
               const { status, ...layerDetails } = layerWithStatus;
 
@@ -452,6 +530,55 @@ const LayerList: React.FC<LayerListProps> = ({
         ) : (
           <p className="text-sm text-slate-500 px-2">No layers to display.</p>
         )}
+
+        {/* Upload Progress section */}
+        {uploadingFiles && uploadingFiles.length > 0 && (
+          <>
+            <div className="flex items-center px-2 py-2">
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+              <span className="px-3 text-xs font-medium text-gray-600 dark:text-gray-400">UPLOADING</span>
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+            </div>
+            <ul className="space-y-2 text-sm px-2">
+              {uploadingFiles.map((uploadingFile) => (
+                <li key={uploadingFile.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                      {uploadingFile.file.name}
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                      {uploadingFile.status === 'uploading' && `${uploadingFile.progress}%`}
+                      {uploadingFile.status === 'completed' && '✓'}
+                      {uploadingFile.status === 'error' && '✗'}
+                    </span>
+                  </div>
+
+                  {uploadingFile.status === 'uploading' && (
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadingFile.progress}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {uploadingFile.status === 'completed' && (
+                    <div className="text-xs text-green-600 dark:text-green-400">
+                      Upload completed
+                    </div>
+                  )}
+
+                  {uploadingFile.status === 'error' && (
+                    <div className="text-xs text-red-600 dark:text-red-400">
+                      {uploadingFile.error || 'Upload failed'}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
         {/* Sources section */}
         {project?.postgres_connections && project.postgres_connections.length > 0 && (
           <>
@@ -460,21 +587,79 @@ const LayerList: React.FC<LayerListProps> = ({
               <span className="px-3 text-xs font-medium text-gray-600 dark:text-gray-400">DATABASES</span>
               <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
             </div>
-            <ul className="space-y-1 text-sm">
+            <ul className="text-sm">
               {project.postgres_connections.map((connection, index) => (
-                <li
-                  key={index}
-                  className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
-                  onClick={() => handleDatabaseClick(connection, project.id)}
-                >
-                  <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
-                    <Database className="h-4 w-4" />
-                    {connection.friendly_name}
-                  </span>
-                  <span className="text-xs text-slate-500 dark:text-gray-400">
-                    {connection.table_count} tables
-                  </span>
-                </li>
+                connection.last_error_text ? (
+                  <TooltipProvider key={index}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <li
+                          className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group`}
+                          onClick={async () => {
+                            try {
+                              const response = await fetch(`/api/projects/${project.id}/postgis-connections/${connection.connection_id}`, {
+                                method: 'DELETE',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                              });
+
+                              if (response.ok) {
+                                toast.success('Database connection deleted successfully');
+                                updateProjectData(project.id);
+                                updateMapData(currentMapData.map_id);
+                              } else {
+                                const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+                                toast.error(`Failed to delete connection: ${errorData.detail || response.statusText}`);
+                              }
+                            } catch (error) {
+                              toast.error(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                            }
+                          }}
+                        >
+                          <span className="font-medium truncate flex items-center gap-2 text-red-400">
+                            <span className="text-red-400">⚠</span>
+                            Connection Error
+                          </span>
+                          <div className="flex-shrink-0">
+                            <div className="group-hover:hidden">
+                              <span className="text-xs text-red-400">Error</span>
+                            </div>
+                            <div className="hidden group-hover:block w-4 h-4">
+                              <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </div>
+                          </div>
+                        </li>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{connection.last_error_text}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <li
+                    key={index}
+                    className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
+                    onClick={() => handleDatabaseClick(connection, project.id)}
+                  >
+                    <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
+                      <Database className="h-4 w-4" />
+                      {connection.friendly_name}
+                    </span>
+                    <div className="flex-shrink-0">
+                      <div className="group-hover:hidden">
+                        <span className="text-xs text-slate-500 dark:text-gray-400">
+                          {connection.table_count} tables
+                        </span>
+                      </div>
+                      <div className="hidden group-hover:block w-4 h-4">
+                        <BookOpenText className="w-4 h-4" />
+                      </div>
+                    </div>
+                  </li>
+                )
               ))}
             </ul>
           </>
@@ -593,7 +778,7 @@ const LayerList: React.FC<LayerListProps> = ({
               <DialogDescription>
                 Your database connection details will be stored on the server. Read-only access is best.{" "}
                 <a
-                  href="https://docs.mundi.ai/en/getting-started/adding-postgis-database/"
+                  href="https://docs.mundi.ai/guides/connecting-to-postgis/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-300 hover:text-blue-400 underline"
@@ -742,14 +927,17 @@ const LayerList: React.FC<LayerListProps> = ({
 };
 
 
-export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData }: MapLibreMapProps) {
+export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData, uploadingFiles }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const globeControlRef = useRef<GlobeControl | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
-  const [zoomHistory, setZoomHistory] = useState<Array<{bounds: [number, number, number, number];}>>([]);
+  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number]; }>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
+  const [currentBasemap, setCurrentBasemap] = useState<string>('');
+  const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
 
 
 
@@ -783,6 +971,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   const [isSaving, setIsSaving] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Function to handle basemap changes
+  const handleBasemapChange = async (newBasemap: string) => {
+    setCurrentBasemap(newBasemap);
+    // Trigger a style update with the new basemap
+    setToolResponseCount(prev => prev + 1);
+  };
 
   // Function to get the appropriate icon for an action
   const getActionIcon = (action: string) => {
@@ -1041,6 +1236,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           zoom: map.getZoom(),
           layer: mapLayer as any
         });
+        // long lasting bug
+        if (tree?.attributes?.style?.backgroundImage === "url(null)") {
+          tree.attributes.style.backgroundImage = "none";
+          tree.attributes.style.width = '16px';
+          tree.attributes.style.height = '16px';
+          tree.attributes.style.opacity = '1.0';
+        }
 
         const symbolElement = renderTree(tree);
         if (symbolElement) {
@@ -1139,8 +1341,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       isUpdating = true;
 
       try {
-        // Fetch the new style
-        const response = await fetch(`/api/maps/${mapId}/style.json`);
+        // Fetch the new style with current basemap
+        const url = new URL(`/api/maps/${mapId}/style.json`, window.location.origin);
+        if (currentBasemap) {
+          url.searchParams.set('basemap', currentBasemap);
+        }
+        const response = await fetch(url.toString());
         if (!response.ok) {
           throw new Error(`Failed to fetch style: ${response.statusText}`);
         }
@@ -1176,7 +1382,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
     // If map is already loaded, update immediately, otherwise wait for load
     updateStyle();
-  }, [mapId, toolResponseCount, mapData]); // Update when these dependencies change
+  }, [mapId, toolResponseCount, mapData, currentBasemap]); // Update when these dependencies change
 
   // Update the points source when pointer positions change
   useEffect(() => {
@@ -1315,7 +1521,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             const currentBounds = mapRef.current.getBounds();
             const currentBoundsArray: [number, number, number, number] = [
               currentBounds.getWest(),
-              currentBounds.getSouth(), 
+              currentBounds.getSouth(),
               currentBounds.getEast(),
               currentBounds.getNorth()
             ];
@@ -1389,6 +1595,43 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       fetchMessages();
     }
   }, [mapId]);
+
+  // Fetch available basemaps on component mount
+  useEffect(() => {
+    const fetchAvailableBasemaps = async () => {
+      try {
+        const response = await fetch('/api/basemaps/available');
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableBasemaps(data.styles);
+          if (data.styles.length > 0) {
+            setCurrentBasemap(data.styles[0]); // Set first style as default
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching available basemaps:', error);
+      }
+    };
+
+    fetchAvailableBasemaps();
+  }, []);
+
+  // Add globe control when map and basemaps are available
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && availableBasemaps.length > 0 && currentBasemap && !globeControlRef.current) {
+      const globeControl = new GlobeControl(availableBasemaps, currentBasemap, handleBasemapChange);
+      globeControlRef.current = globeControl;
+      map.addControl(globeControl);
+    }
+  }, [availableBasemaps, currentBasemap]);
+
+  // Update globe control when basemap changes
+  useEffect(() => {
+    if (globeControlRef.current && currentBasemap) {
+      globeControlRef.current.updateBasemap(currentBasemap);
+    }
+  }, [currentBasemap]);
 
   useEffect(() => {
     if (errors.length > 0) {
@@ -1491,6 +1734,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             zoomHistory={zoomHistory}
             zoomHistoryIndex={zoomHistoryIndex}
             setZoomHistoryIndex={setZoomHistoryIndex}
+            uploadingFiles={uploadingFiles}
           />
         )}
         {/* Changelog */}

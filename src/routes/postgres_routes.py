@@ -27,7 +27,6 @@ from fastapi import (
     Depends,
     BackgroundTasks,
 )
-import asyncpg
 from fastapi.responses import StreamingResponse, Response
 from ..dependencies.db_pool import get_pooled_connection
 from pydantic import BaseModel
@@ -78,6 +77,10 @@ from ..dependencies.database_documenter import (
     DatabaseDocumenter,
     get_database_documenter,
 )
+from ..dependencies.postgres_connection import (
+    PostgresConnectionManager,
+    get_postgres_connection_manager,
+)
 from typing import Callable
 
 # Global semaphore to limit concurrent social image renderings
@@ -95,6 +98,9 @@ redis = Redis(
 
 # Create router
 router = APIRouter()
+
+# Create separate router for basemap endpoints
+basemap_router = APIRouter()
 
 
 def generate_id(length=12, prefix=""):
@@ -241,6 +247,9 @@ async def save_and_fork_map(
     request: Request,
     map_id: str,
     session: UserContext = Depends(verify_session_required),
+    postgis_provider: Callable = Depends(get_postgis_provider),
+    layer_describer: LayerDescriber = Depends(get_layer_describer),
+    chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
 ):
     """
     Create a fork of an existing map with a new map ID.
@@ -336,7 +345,13 @@ async def save_and_fork_map(
         diff_summary = {"diff_summary": "first map"}
         if prev_map_id:
             diff_summary = await summarize_map_diff(
-                request, prev_map_id, map_id, session
+                request,
+                prev_map_id,
+                map_id,
+                session,
+                postgis_provider=postgis_provider,
+                layer_describer=layer_describer,
+                chat_args=chat_args,
             )
 
         # Update project to include the new map
@@ -706,6 +721,9 @@ async def get_map_description(
     session: UserContext = Depends(verify_session_required),
     postgis_provider: Callable = Depends(get_postgis_provider),
     layer_describer: LayerDescriber = Depends(get_layer_describer),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     with get_db_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -743,7 +761,7 @@ async def get_map_description(
             FROM project_postgres_connections ppc
             JOIN user_mundiai_maps m ON ppc.project_id = m.project_id
             LEFT JOIN project_postgres_summary pps ON pps.connection_id = ppc.id
-            WHERE m.id = %s
+            WHERE m.id = %s AND ppc.soft_deleted_at IS NULL
             ORDER BY ppc.connection_name
             """,
             (map_id,),
@@ -754,8 +772,10 @@ async def get_map_description(
         # Add PostgreSQL connection data to content
         for connection in postgres_connections:
             try:
-                # Get tables from this PostgreSQL connection
-                tables = await postgis_provider(connection["connection_uri"])
+                # Get tables from this PostgreSQL connection using error tracking
+                tables = await postgis_provider.get_tables_by_connection_id(
+                    connection["id"], connection_manager
+                )
 
                 # Use AI-generated friendly name if available, otherwise fallback to connection_name or "Loading..."
                 connection_name = (
@@ -769,7 +789,11 @@ async def get_map_description(
                 content.append("**Available Tables:** " + tables)
 
             except Exception:
-                continue
+                content.append(
+                    f'\n## PostGIS "{connection["connection_name"]}" (ID {connection["id"]})\n'
+                )
+
+                content.append("Exception while connecting to database.")
 
         # Get all layers for this map
         cursor.execute(
@@ -826,6 +850,7 @@ async def get_map_style(
     only_show_inline_sources: bool = False,
     session: UserContext = Depends(verify_session_optional),
     override_layers: Optional[str] = None,
+    basemap: Optional[str] = None,
     base_map: BaseMapProvider = Depends(get_base_map_provider),
 ):
     # Get vector layers for this map from the database
@@ -859,8 +884,20 @@ async def get_map_style(
                 )
 
     return await get_map_style_internal(
-        map_id, base_map, only_show_inline_sources, override_layers
+        map_id, base_map, only_show_inline_sources, override_layers, basemap
     )
+
+
+@basemap_router.get(
+    "/available",
+    operation_id="get_available_basemaps",
+    response_class=StarletteJSONResponse,
+)
+async def get_available_basemaps(
+    base_map: BaseMapProvider = Depends(get_base_map_provider),
+):
+    """Get list of available basemap styles."""
+    return {"styles": base_map.get_available_styles()}
 
 
 async def get_map_style_internal(
@@ -868,6 +905,7 @@ async def get_map_style_internal(
     base_map: BaseMapProvider,
     only_show_inline_sources: bool = False,
     override_layers: Optional[str] = None,
+    basemap: Optional[str] = None,
 ):
     # Get vector layers for this map from the database
     async with get_async_db_connection() as conn:
@@ -922,7 +960,7 @@ async def get_map_style_internal(
         vector_layers.sort(key=get_geometry_order)
         postgis_layers.sort(key=get_geometry_order)
 
-    style_json = await base_map.get_base_style()
+    style_json = await base_map.get_base_style(basemap)
 
     # compute combined WGS84 bounds from all_layers and derive center + zoom with 20% padding
     bounds_list = [layer["bounds"] for layer in all_layers if layer.get("bounds")]
@@ -3059,6 +3097,8 @@ class PostgresConnectionDetails(BaseModel):
     connection_id: str
     table_count: int
     friendly_name: str
+    last_error_text: Optional[str] = None
+    last_error_timestamp: Optional[datetime] = None
 
 
 class ProjectResponse(BaseModel):
@@ -3080,6 +3120,9 @@ class UserProjectsResponse(BaseModel):
 )
 async def list_user_projects(
     session: UserContext = Depends(verify_session_required),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     """
     List all projects associated with the authenticated user.
@@ -3143,7 +3186,7 @@ async def list_user_projects(
                 """
                 SELECT id, connection_uri, connection_name
                 FROM project_postgres_connections
-                WHERE project_id = $1
+                WHERE project_id = $1 AND soft_deleted_at IS NULL
                 ORDER BY created_at ASC
                 """,
                 project_data["id"],
@@ -3151,7 +3194,6 @@ async def list_user_projects(
 
             for postgres_conn_result in postgres_conn_results:
                 connection_id = postgres_conn_result["id"]
-                connection_uri = postgres_conn_result["connection_uri"]
 
                 # Get AI-generated friendly name, fallback to connection_name if not available
                 summary_result = await conn.fetchrow(
@@ -3173,7 +3215,9 @@ async def list_user_projects(
                 table_count = 0
 
                 try:
-                    postgres_conn = await asyncpg.connect(connection_uri)
+                    postgres_conn = await connection_manager.connect_to_postgres(
+                        connection_id
+                    )
                     try:
                         # Count tables in all schemas (excluding system schemas)
                         table_count_result = await postgres_conn.fetchval("""
@@ -3190,11 +3234,18 @@ async def list_user_projects(
                     print(f"Failed to connect to PostgreSQL for table count: {e}")
                     table_count = 0
 
+                # Get error details from the database (they were stored during the connection attempt)
+                connection_details = await connection_manager.get_connection(
+                    connection_id
+                )
+
                 postgres_connections.append(
                     PostgresConnectionDetails(
                         connection_id=connection_id,
                         table_count=table_count,
                         friendly_name=friendly_name,
+                        last_error_text=connection_details["last_error_text"],
+                        last_error_timestamp=connection_details["last_error_timestamp"],
                     )
                 )
 
@@ -3219,6 +3270,9 @@ async def list_user_projects(
 async def get_project(
     project_id: str,
     session: UserContext = Depends(verify_session_required),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     user_id = session.get_user_id()
     async with get_async_db_connection() as conn:
@@ -3282,7 +3336,7 @@ async def get_project(
             """
             SELECT id, connection_uri, connection_name
             FROM project_postgres_connections
-            WHERE project_id = $1
+            WHERE project_id = $1 AND soft_deleted_at IS NULL
             ORDER BY created_at ASC
             """,
             project_data["id"],
@@ -3290,7 +3344,6 @@ async def get_project(
 
         for postgres_conn_result in postgres_conn_results:
             connection_id = postgres_conn_result["id"]
-            connection_uri = postgres_conn_result["connection_uri"]
 
             # Get AI-generated friendly name, fallback to connection_name if not available
             summary_result = await conn.fetchrow(
@@ -3312,7 +3365,9 @@ async def get_project(
             table_count = 0
 
             try:
-                postgres_conn = await asyncpg.connect(connection_uri)
+                postgres_conn = await connection_manager.connect_to_postgres(
+                    connection_id
+                )
                 try:
                     # Count tables in all schemas (excluding system schemas)
                     table_count_result = await postgres_conn.fetchval("""
@@ -3329,11 +3384,16 @@ async def get_project(
                 print(f"Failed to connect to PostgreSQL for table count: {e}")
                 table_count = 0
 
+            # Get error details from the database (they were stored during the connection attempt)
+            connection_details = await connection_manager.get_connection(connection_id)
+
             postgres_connections.append(
                 PostgresConnectionDetails(
                     connection_id=connection_id,
                     table_count=table_count,
                     friendly_name=friendly_name,
+                    last_error_text=connection_details["last_error_text"],
+                    last_error_timestamp=connection_details["last_error_timestamp"],
                 )
             )
 
@@ -3488,7 +3548,7 @@ async def add_postgis_connection(
         cursor.execute(
             """
             SELECT id FROM project_postgres_connections
-            WHERE project_id = %s AND user_id = %s AND connection_uri = %s
+            WHERE project_id = %s AND user_id = %s AND connection_uri = %s AND soft_deleted_at IS NULL
             """,
             (project_id, user_id, connection_uri),
         )
@@ -3530,6 +3590,87 @@ async def add_postgis_connection(
             return PostgresConnectionResponse(
                 success=True, message="Connection URI already exists"
             )
+
+
+@project_router.delete(
+    "/{project_id}/postgis-connections/{connection_id}",
+    response_model=PostgresConnectionResponse,
+    operation_id="soft_delete_postgis_connection",
+)
+async def soft_delete_postgis_connection(
+    project_id: str,
+    connection_id: str,
+    session: UserContext = Depends(verify_session_required),
+):
+    """
+    Soft delete a PostgreSQL connection from a project.
+    Only the project owner or editors can delete connections.
+    """
+    user_id = session.get_user_id()
+
+    async with get_async_db_connection() as conn:
+        # Check if user has access to the project
+        project = await conn.fetchrow(
+            """
+            SELECT owner_uuid, editor_uuids
+            FROM user_mundiai_projects
+            WHERE id = $1 AND soft_deleted_at IS NULL
+            """,
+            project_id,
+        )
+
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found.",
+            )
+
+        # Check if user is owner or editor
+        if str(project["owner_uuid"]) != user_id and user_id not in (
+            project["editor_uuids"] or []
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to modify this project.",
+            )
+
+        # Check if the connection exists and belongs to this project
+        connection = await conn.fetchrow(
+            """
+            SELECT id, soft_deleted_at
+            FROM project_postgres_connections
+            WHERE id = $1 AND project_id = $2
+            """,
+            connection_id,
+            project_id,
+        )
+
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"PostgreSQL connection {connection_id} not found in project {project_id}.",
+            )
+
+        if connection["soft_deleted_at"] is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="PostgreSQL connection is already deleted.",
+            )
+
+        # Soft delete the connection by setting the timestamp
+        await conn.execute(
+            """
+            UPDATE project_postgres_connections
+            SET soft_deleted_at = CURRENT_TIMESTAMP
+            WHERE id = $1 AND project_id = $2
+            """,
+            connection_id,
+            project_id,
+        )
+
+        return PostgresConnectionResponse(
+            success=True, message="PostgreSQL connection deleted successfully"
+        )
 
 
 @project_router.get(
@@ -3589,7 +3730,7 @@ async def get_database_documentation(
                 pps.generated_at
             FROM project_postgres_connections ppc
             LEFT JOIN project_postgres_summary pps ON ppc.id = pps.connection_id
-            WHERE ppc.id = %s AND ppc.project_id = %s
+            WHERE ppc.id = %s AND ppc.project_id = %s AND ppc.soft_deleted_at IS NULL
             ORDER BY pps.generated_at DESC
             LIMIT 1
             """,
