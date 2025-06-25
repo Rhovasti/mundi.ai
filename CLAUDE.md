@@ -13,8 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Eno Fantasy World Features
 - **Custom Basemap**: Professional relief and satellite imagery of the Eno world
 - **Fantasy Geography**: Cities, villages, rivers, lakes, biomes, and roads specific to Eno
-- **Coordinate System**: Properly georeferenced EPSG:3857 (Web Mercator) projection
-- **MapTiler Integration**: Temporary solution for professional coordinate alignment
+- **Coordinate System**: Extended coordinates supporting the full Eno world bounds
+- **Open-Source Tile Server**: Self-hosted tile serving with no external dependencies
 - **Multi-layer Visualization**: Interactive fantasy world exploration with detailed vector data
 
 ## Essential Commands

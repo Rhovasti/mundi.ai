@@ -143,6 +143,7 @@ mcp.mount()
 # First mount specific static assets to ensure they're properly served
 app.mount("/assets", StaticFiles(directory="frontendts/dist/assets"), name="spa-assets")
 app.mount("/fonts", StaticFiles(directory="frontendts/dist/fonts"), name="spa-fonts")
+app.mount("/static", StaticFiles(directory="static"), name="demo-files")
 
 
 @app.post("/supertokens/session/refresh")

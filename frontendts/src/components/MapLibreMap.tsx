@@ -58,6 +58,8 @@ import { Activity, Brain, Database, Send } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { CoordinateDisplay } from './CoordinateDisplay';
 import { LayerControl } from './LayerControl';
+import { BasemapSelector } from './BasemapSelector';
+import { CustomBasemap } from '../lib/types';
 
 
 // Define the type for chat completion messages from the database
@@ -748,24 +750,10 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
-  const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
   const [zoomHistory, setZoomHistory] = useState<Array<{bounds: [number, number, number, number];}>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
-  // Hardcoded Eno basemap configuration
-  const ENO_BASEMAP = {
-    id: 'BUlJVMxOuaEK',
-    name: 'Eno Relief Map',
-    tile_url_template: 'file:///app/Eno/tif/relief_preview.png',
-    tile_format: 'png',
-    min_zoom: 0,
-    max_zoom: 18,
-    type: 'image' as const,
-    bounds: [-73.312, -92.897, 117.287, 98.423],
-    center: [21.9875, 2.763],
-    default_zoom: 3,
-    attribution: '© Eno Fantasy World'
-  };
+  const [selectedBasemap, setSelectedBasemap] = useState<CustomBasemap | null>(null);
 
 
 
@@ -1069,12 +1057,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     });
   }
 
-  // Initialize Eno vector layers (basemap provided by MapTiler backend)
+  // Initialize Eno vector layers on top of selected basemap
   const initializeEnoVectorLayers = async (map: Map) => {
     try {
-      console.log('Adding Eno vector layers to MapTiler basemap...');
+      console.log('Adding Eno vector layers to selected basemap...');
       
-      // MapTiler provides the basemap - we only add vector layers on top
+      // Vector layers are added on top of the selected basemap
       const vectorLayers = [
         {
           id: 'rivers',
@@ -1220,12 +1208,58 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         }
       });
 
-      // Let the backend EnoWorldProvider handle initial map view
-
-      console.log('Eno basemap and vector layers initialized successfully');
+      console.log('Eno vector layers initialized successfully');
     } catch (error) {
-      console.error('Error initializing Eno basemap:', error);
-      addError('Failed to initialize Eno basemap: ' + (error instanceof Error ? error.message : String(error)), true);
+      console.error('Error initializing Eno vector layers:', error);
+      addError('Failed to initialize Eno vector layers: ' + (error instanceof Error ? error.message : String(error)), true);
+    }
+  };
+
+  // Function to handle basemap changes
+  const handleBasemapChange = async (basemap: CustomBasemap | null) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    setSelectedBasemap(basemap);
+
+    try {
+      if (basemap) {
+        // Fetch the basemap style
+        const response = await fetch(`/api/basemaps/${basemap.id}/style`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch basemap style: ${response.statusText}`);
+        }
+        const basemapStyle = await response.json();
+        
+        // Set the new style which includes the basemap
+        map.setStyle(basemapStyle);
+        
+        // After style loads, add the vector layers back
+        map.once('style.load', () => {
+          initializeEnoVectorLayers(map);
+        });
+        
+        console.log(`Switched to basemap: ${basemap.name}`);
+      } else {
+        // No basemap selected - use empty style with just vector layers
+        const emptyStyle = {
+          version: 8 as const,
+          sources: {},
+          layers: [],
+          glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf"
+        };
+        
+        map.setStyle(emptyStyle);
+        
+        map.once('style.load', () => {
+          initializeEnoVectorLayers(map);
+        });
+        
+        console.log('Removed basemap, showing only vector layers');
+      }
+    } catch (error) {
+      console.error('Error changing basemap:', error);
+      addError('Failed to change basemap: ' + (error instanceof Error ? error.message : String(error)), true);
     }
   };
 
@@ -1272,8 +1306,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         };
         cursorImage.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAIRSURBVHgB7dnNsdowFAXgQ5INO9OBt9m5BKUDOsAl0AHuIO4AUgF0YKgAOrCpwLDL7kbnPUHAETEY8yy98TejsWf8fnQsc3UBoNfr9WrkZoTwnMxmM8EnCCP0GcLIyXw+P4WJ4CG5tFwuZTQalfAwjFRtt1sJgoCrM4FHxCbPcwnDkGGm8ITcchFmBg/I//gURur4EkbuUZalRFHEMD/hKLkXw4zHY4aZw0HyqMlkwjBbPQI4RJowLQ3DhHCENOVafybPcCmMPMuVMNIGFzpnaUvXnbO0qcvOWdrWVecsr9BFfyav0iTMAM3xf+JZh8PhPIqieDvu93vsdjusVqu75/gNH2iz2SBN0/OEzTjoS6dRmOPeHHf4APIodsH8PT0U3jfB1prHL3gR3nXzaJzp8oo4jnmq8Pfud672xcpRlWUZV4SbnzOtvDXExcYW65Fx4lVKqdN1J1hDmFZjbH4m5qRvrEoGR1xNbrFY2PolPj4lA95YFQUHXIXA7Q42mU6nTq/K24SSJKl7TxFwpVh6q8zurdCCr2guGQwG0EEKff4D7+XU5rf2fTgcRvpxurpwPB6xXq9DffoLHXrkGyvFSlbFVTIV7p6/4QxrKTaPZgqPKFsp5qqYaufUZ111StuqsKrpawk8Yi3FbGngWNtS559SzBUym2MOz6R8gfNjIBOAm2IMD3H3591nAIVez21/ACUSSP4DF2G8AAAAAElFTkSuQmCC";
 
-        // Initialize Eno basemap automatically
-        initializeEnoVectorLayers(newMap);
+        // Don't auto-initialize vector layers here - wait for basemap selection
 
         setLoading(false);
       });
@@ -1308,61 +1341,24 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     }
   }, []); // Only run once on mount
 
-  // Separate effect for style updates
+  // Disabled auto style updates - using manual basemap selection instead
+  // useEffect(() => {
+  //   const map = mapRef.current;
+  //   if (!map) return;
+  //   
+  //   // Manual basemap selection replaces automatic style updates
+  // }, [mapId, toolResponseCount, mapData]);
+  
+  // Effect to load default basemap on mount
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-
-    // Prevent multiple simultaneous style updates
-    let isUpdating = false;
-
-    // Wait for map to be loaded before updating style
-    const updateStyle = async () => {
-      if (isUpdating) {
-        return;
-      }
-
-      isUpdating = true;
-
-      try {
-        // Fetch the new style
-        const response = await fetch(`/api/maps/${mapId}/style.json`);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch style: ${response.statusText}`);
-        }
-        const newStyle = await response.json();
-
-        // Update the style using setStyle
-        map.setStyle(newStyle);
-        loadLegendSymbols(map);
-
-        // If we haven't zoomed yet, zoom to the style's center and zoom level
-        // setStyle on purpose does not reset the zoom/center, but it's nice to load a map
-        // and be correctly positioned on the data
-        if (!hasZoomed) {
-          if (newStyle.center && newStyle.zoom !== undefined) {
-            map.jumpTo({
-              center: newStyle.center,
-              zoom: newStyle.zoom,
-              pitch: newStyle.pitch || 0,
-              bearing: newStyle.bearing || 0
-            });
-          }
-          setHasZoomed(true);
-        }
-
-        isUpdating = false; // Reset flag when done
-
-      } catch (err) {
-        console.error('Error updating style:', err);
-        addError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)), true);
-        isUpdating = false; // Reset flag on error
-      }
-    };
-
-    // If map is already loaded, update immediately, otherwise wait for load
-    updateStyle();
-  }, [mapId, toolResponseCount, mapData]); // Update when these dependencies change
+    if (!map || !map.isStyleLoaded()) return;
+    
+    // Initialize with vector layers only (no basemap) by default
+    if (!selectedBasemap && map.getStyle().layers.length === 0) {
+      initializeEnoVectorLayers(map);
+    }
+  }, [mapRef.current, selectedBasemap]);
 
   // Update the points source when pointer positions change
   useEffect(() => {
@@ -1685,10 +1681,16 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           />
         )}
 
-        {/* Eno World Indicator */}
+        {/* Basemap Selector */}
         <div className="absolute top-4 right-4 z-30">
-          <div className="bg-black bg-opacity-60 text-white px-3 py-2 rounded-lg text-sm">
-            🗺️ Eno Fantasy World
+          <div className="flex flex-col gap-2">
+            <BasemapSelector 
+              selectedBasemap={selectedBasemap}
+              onBasemapChange={handleBasemapChange}
+            />
+            <div className="bg-black bg-opacity-60 text-white px-3 py-2 rounded-lg text-sm text-center">
+              🗺️ Eno Fantasy World
+            </div>
           </div>
         </div>
 

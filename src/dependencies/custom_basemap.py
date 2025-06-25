@@ -42,8 +42,36 @@ class CustomTileMapProvider(BaseMapProvider):
     
     async def get_base_style(self) -> Dict[str, Any]:
         """Generate MapLibre GL style for custom tilemap."""
+        # Check if this is an external style URL (like MapTiler)
+        if (self.tile_source.tile_url_template.startswith("https://") and 
+            ("style.json" in self.tile_source.tile_url_template or self.tile_source.tile_format == "style")):
+            # For external style URLs, use httpx to fetch the style
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(self.tile_source.tile_url_template)
+                    if response.status_code == 200:
+                        external_style = response.json()
+                        # Override center and zoom with our settings
+                        if self.tile_source.center:
+                            external_style["center"] = self.tile_source.center
+                        if self.tile_source.default_zoom is not None:
+                            external_style["zoom"] = self.tile_source.default_zoom
+                        external_style["bearing"] = 0
+                        external_style["pitch"] = 0
+                        return external_style
+                    else:
+                        print(f"Failed to fetch external style: {response.status_code}")
+                        # Fall through to create local style as fallback
+            except ImportError:
+                print("httpx not available, falling back to local style")
+                # Fall through to create local style as fallback  
+            except Exception as e:
+                print(f"Error fetching external style: {e}")
+                # Fall through to create local style as fallback
+        
         # Check if this is a vector source (GeoJSON)
-        if self.tile_source.tile_url_template.startswith("geojson://"):
+        elif self.tile_source.tile_url_template.startswith("geojson://"):
             # Handle GeoJSON vector sources
             geojson_path = self.tile_source.tile_url_template.replace("geojson://", "")
             
@@ -68,14 +96,21 @@ class CustomTileMapProvider(BaseMapProvider):
                 },
                 "layers": [
                     {
+                        "id": "background",
+                        "type": "background",
+                        "paint": {
+                            "background-color": "#f0f0f0"
+                        }
+                    },
+                    {
                         "id": f"{self.tile_source.id}-points",
                         "type": "circle",
                         "source": self.tile_source.id,
                         "filter": ["==", "$type", "Point"],
                         "paint": {
-                            "circle-radius": 5,
+                            "circle-radius": 6,
                             "circle-color": "#ff0000",
-                            "circle-stroke-width": 1,
+                            "circle-stroke-width": 2,
                             "circle-stroke-color": "#ffffff"
                         }
                     },
@@ -85,7 +120,7 @@ class CustomTileMapProvider(BaseMapProvider):
                         "source": self.tile_source.id,
                         "filter": ["==", "$type", "Point"],
                         "layout": {
-                            "text-field": ["get", "name"],
+                            "text-field": ["coalesce", ["get", "Burg"], ["get", "name"], ["get", "Name"]],
                             "text-size": 12,
                             "text-offset": [0, 1.5],
                             "text-anchor": "top"
@@ -136,8 +171,8 @@ class CustomTileMapProvider(BaseMapProvider):
                 ],
             }
         
-        # Add bounds if specified
-        if self.tile_source.bounds:
+        # Add bounds if specified (only for raster sources, not GeoJSON)
+        if self.tile_source.bounds and not self.tile_source.tile_url_template.startswith("geojson://"):
             style["sources"][self.tile_source.id]["bounds"] = self.tile_source.bounds
         
         # Set center and zoom

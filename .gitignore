@@ -9,3 +9,6 @@ src/conftest.py
 Eno/
 # Examples and screenshots
 examples/
+Examples/
+# Generated tile directories (large files)
+tiles/
