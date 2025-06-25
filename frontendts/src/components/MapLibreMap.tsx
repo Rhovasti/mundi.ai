@@ -1057,163 +1057,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     });
   }
 
-  // Initialize Eno vector layers on top of selected basemap
-  const initializeEnoVectorLayers = async (map: Map) => {
-    try {
-      console.log('Adding Eno vector layers to selected basemap...');
-      
-      // Vector layers are added on top of the selected basemap
-      const vectorLayers = [
-        {
-          id: 'rivers',
-          name: 'Rivers',
-          type: 'line',
-          paint: {
-            'line-color': '#4a90e2',
-            'line-width': 2,
-            'line-opacity': 0.8
-          }
-        },
-        {
-          id: 'lakes',
-          name: 'Lakes',
-          type: 'fill',
-          paint: {
-            'fill-color': '#6bb6ff',
-            'fill-opacity': 0.6,
-            'fill-outline-color': '#4a90e2'
-          }
-        },
-        {
-          id: 'biomes',
-          name: 'Biomes',
-          type: 'fill',
-          paint: {
-            'fill-color': [
-              'case',
-              ['==', ['get', 'name'], 'Forest'], '#2ecc71',
-              ['==', ['get', 'name'], 'Desert'], '#f39c12',
-              ['==', ['get', 'name'], 'Mountains'], '#95a5a6',
-              ['==', ['get', 'name'], 'Grassland'], '#58d68d',
-              '#e67e22'
-            ],
-            'fill-opacity': 0.3
-          }
-        },
-        {
-          id: 'roads',
-          name: 'Roads',
-          type: 'line',
-          paint: {
-            'line-color': '#8b4513',
-            'line-width': 1,
-            'line-opacity': 0.7
-          }
-        },
-        {
-          id: 'villages',
-          name: 'Villages',
-          type: 'circle',
-          paint: {
-            'circle-radius': 3,
-            'circle-color': '#ffa500',
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 1,
-            'circle-opacity': 0.8
-          }
-        }
-      ];
-
-      // Add vector layer sources and layers
-      for (const layer of vectorLayers) {
-        try {
-          map.addSource(`eno-${layer.id}`, {
-            type: 'geojson',
-            data: `/api/eno/vector/${layer.id}`
-          });
-
-          map.addLayer({
-            id: `eno-${layer.id}-layer`,
-            type: layer.type as any,
-            source: `eno-${layer.id}`,
-            paint: layer.paint,
-            layout: {
-              visibility: 'visible'
-            }
-          });
-
-          console.log(`Added Eno ${layer.name} layer`);
-        } catch (err) {
-          console.warn(`Failed to add ${layer.name} layer:`, err);
-        }
-      }
-
-      // Add the Eno cities GeoJSON source
-      map.addSource('eno-cities', {
-        type: 'geojson',
-        data: '/api/eno/vector/cities'
-      });
-
-      // Add cities layer with points
-      map.addLayer({
-        id: 'eno-cities-layer',
-        type: 'circle',
-        source: 'eno-cities',
-        paint: {
-          'circle-radius': [
-            'interpolate',
-            ['linear'],
-            ['get', 'Population'],
-            0, 4,
-            10000, 6,
-            50000, 10,
-            100000, 14
-          ],
-          'circle-color': [
-            'case',
-            ['==', ['get', 'Capital'], 'capital'], '#e74c3c',
-            ['==', ['get', 'Port'], 'port'], '#3498db',
-            '#ff6b6b'
-          ],
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2,
-          'circle-opacity': 0.8
-        }
-      });
-
-      // Add city labels
-      map.addLayer({
-        id: 'eno-cities-labels',
-        type: 'symbol',
-        source: 'eno-cities',
-        layout: {
-          'text-field': ['get', 'Burg'],
-          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-          'text-offset': [0, 1.5],
-          'text-anchor': 'top',
-          'text-size': [
-            'interpolate',
-            ['linear'],
-            ['get', 'Population'],
-            0, 10,
-            10000, 12,
-            50000, 14,
-            100000, 16
-          ]
-        },
-        paint: {
-          'text-color': '#2c3e50',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 1
-        }
-      });
-
-      console.log('Eno vector layers initialized successfully');
-    } catch (error) {
-      console.error('Error initializing Eno vector layers:', error);
-      addError('Failed to initialize Eno vector layers: ' + (error instanceof Error ? error.message : String(error)), true);
-    }
-  };
+  // Removed automatic vector layer initialization - layers should be added via UI
 
   // Function to handle basemap changes
   const handleBasemapChange = async (basemap: CustomBasemap | null) => {
@@ -1234,10 +1078,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         // Set the new style which includes the basemap
         map.setStyle(basemapStyle);
         
-        // After style loads, add the vector layers back
-        map.once('style.load', () => {
-          initializeEnoVectorLayers(map);
-        });
+        // After style loads, vector layers will be managed via UI
         
         console.log(`Switched to basemap: ${basemap.name}`);
       } else {
@@ -1252,7 +1093,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         map.setStyle(emptyStyle);
         
         map.once('style.load', () => {
-          initializeEnoVectorLayers(map);
+          // Removed automatic vector layer initialization - layers should be added via UI
         });
         
         console.log('Removed basemap, showing only vector layers');
@@ -1274,7 +1115,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         style: {
           version: 8,
           sources: {},
-          layers: []
+          layers: [],
+          glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf"
         }, // Start with empty style so map loads
         attributionControl: {
           compact: false
@@ -1296,6 +1138,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         newMap.addControl(new NavigationControl());
         newMap.addControl(new ScaleControl());
 
+        // Vector layers will be initialized by the style loading effect
+        
         // Load cursor image early (doesn't need to wait for style)
         const cursorImage = new Image();
         cursorImage.onload = () => {
@@ -1305,8 +1149,6 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           newMap.addImage('remote-cursor', cursorImage);
         };
         cursorImage.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAIRSURBVHgB7dnNsdowFAXgQ5INO9OBt9m5BKUDOsAl0AHuIO4AUgF0YKgAOrCpwLDL7kbnPUHAETEY8yy98TejsWf8fnQsc3UBoNfr9WrkZoTwnMxmM8EnCCP0GcLIyXw+P4WJ4CG5tFwuZTQalfAwjFRtt1sJgoCrM4FHxCbPcwnDkGGm8ITcchFmBg/I//gURur4EkbuUZalRFHEMD/hKLkXw4zHY4aZw0HyqMlkwjBbPQI4RJowLQ3DhHCENOVafybPcCmMPMuVMNIGFzpnaUvXnbO0qcvOWdrWVecsr9BFfyav0iTMAM3xf+JZh8PhPIqieDvu93vsdjusVqu75/gNH2iz2SBN0/OEzTjoS6dRmOPeHHf4APIodsH8PT0U3jfB1prHL3gR3nXzaJzp8oo4jnmq8Pfud672xcpRlWUZV4SbnzOtvDXExcYW65Fx4lVKqdN1J1hDmFZjbH4m5qRvrEoGR1xNbrFY2PolPj4lA95YFQUHXIXA7Q42mU6nTq/K24SSJKl7TxFwpVh6q8zurdCCr2guGQwG0EEKff4D7+XU5rf2fTgcRvpxurpwPB6xXq9DffoLHXrkGyvFSlbFVTIV7p6/4QxrKTaPZgqPKFsp5qqYaufUZ111StuqsKrpawk8Yi3FbGngWNtS559SzBUym2MOz6R8gfNjIBOAm2IMD3H3591nAIVez21/ACUSSP4DF2G8AAAAAElFTkSuQmCC";
-
-        // Don't auto-initialize vector layers here - wait for basemap selection
 
         setLoading(false);
       });
@@ -1341,24 +1183,78 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     }
   }, []); // Only run once on mount
 
-  // Disabled auto style updates - using manual basemap selection instead
-  // useEffect(() => {
-  //   const map = mapRef.current;
-  //   if (!map) return;
-  //   
-  //   // Manual basemap selection replaces automatic style updates
-  // }, [mapId, toolResponseCount, mapData]);
-  
-  // Effect to load default basemap on mount
+  // Auto style updates - only when no basemap is manually selected
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || selectedBasemap !== null) return; // Skip if basemap is manually selected
     
-    // Initialize with vector layers only (no basemap) by default
-    if (!selectedBasemap && map.getStyle().layers.length === 0) {
-      initializeEnoVectorLayers(map);
+    let isUpdating = false;
+
+    const updateStyle = async () => {
+      if (isUpdating) {
+        return;
+      }
+
+      isUpdating = true;
+
+      try {
+        // Fetch the new style
+        const response = await fetch(`/api/maps/${mapId}/style.json`);
+        if (!response.ok) {
+          console.log('No map style found, using default with vector layers only');
+          // If no map style exists, initialize vector layers on empty style
+          if (map.isStyleLoaded() && map.getStyle().layers.length === 0) {
+            // Removed automatic vector layer initialization - layers should be added via UI
+          }
+          isUpdating = false;
+          return;
+        }
+        const newStyle = await response.json();
+
+        // Update the style using setStyle
+        map.setStyle(newStyle);
+
+        // After style loads, add vector layers
+        map.once('style.load', () => {
+          loadLegendSymbols(map);
+          // Removed automatic vector layer initialization - layers should be added via UI
+        });
+
+        // If we haven't zoomed yet, zoom to the style's center and zoom level
+        if (!hasZoomed) {
+          if (newStyle.center && newStyle.zoom !== undefined) {
+            map.jumpTo({
+              center: newStyle.center,
+              zoom: newStyle.zoom,
+              pitch: newStyle.pitch || 0,
+              bearing: newStyle.bearing || 0
+            });
+          }
+          setHasZoomed(true);
+        }
+
+        isUpdating = false;
+
+      } catch (err) {
+        console.error('Error updating style:', err);
+        // Fallback to vector layers only
+        if (map.isStyleLoaded() && map.getStyle().layers.length === 0) {
+          // Removed automatic vector layer initialization - layers should be added via UI
+        }
+        isUpdating = false;
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      updateStyle();
+    } else {
+      map.once('load', updateStyle);
     }
-  }, [mapRef.current, selectedBasemap]);
+
+  }, [mapId, toolResponseCount, mapData, selectedBasemap]);
+  
+  // Note: Vector layers are now initialized in the map 'load' event above
+  // This ensures proper timing and glyphs availability
 
   // Update the points source when pointer positions change
   useEffect(() => {

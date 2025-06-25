@@ -18,6 +18,9 @@ from pathlib import Path
 import aiofiles
 import json
 import os
+from typing import List, Dict, Any
+
+from .vector_styles import get_vector_layer_styles, get_all_vector_styles, LAYER_ORDER
 
 router = APIRouter()
 
@@ -220,3 +223,85 @@ async def get_roads():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading roads: {str(e)}")
+
+
+@router.get("/api/eno/vector/{layer_id}/style")
+async def get_vector_layer_style(layer_id: str):
+    """Get MapLibre style configuration for a specific Eno vector layer."""
+    if layer_id not in VECTOR_LAYERS:
+        raise HTTPException(status_code=404, detail=f"Layer '{layer_id}' not found")
+    
+    styles = get_vector_layer_styles(layer_id)
+    if not styles:
+        # Return a default style if none configured
+        layer_info = VECTOR_LAYERS[layer_id]
+        geometry_type = layer_info["type"]
+        
+        default_style = {
+            "id": f"eno-{layer_id}-layer",
+            "type": "circle" if geometry_type == "Point" else "line" if geometry_type == "LineString" else "fill",
+            "source": f"eno-{layer_id}",
+            "layout": {"visibility": "visible"},
+            "paint": {}
+        }
+        styles = [default_style]
+    
+    return {
+        "layer_id": layer_id,
+        "name": VECTOR_LAYERS[layer_id]["name"],
+        "styles": styles
+    }
+
+
+@router.get("/api/eno/styles/all")
+async def get_all_vector_layer_styles():
+    """Get MapLibre style configurations for all Eno vector layers."""
+    return {
+        "styles": get_all_vector_styles(),
+        "layer_order": LAYER_ORDER
+    }
+
+
+@router.get("/api/eno/styles/composite")
+async def get_composite_vector_style():
+    """Get a complete MapLibre style with all Eno vector layers properly configured."""
+    style = {
+        "version": 8,
+        "name": "Eno Fantasy World Vectors",
+        "metadata": {
+            "description": "Vector layers for the Eno fantasy world"
+        },
+        "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+        "sources": {},
+        "layers": []
+    }
+    
+    # Add sources for each available layer
+    for layer_id, layer_info in VECTOR_LAYERS.items():
+        file_path = Path(layer_info["path"])
+        if file_path.exists():
+            style["sources"][f"eno-{layer_id}"] = {
+                "type": "geojson",
+                "data": f"/api/eno/vector/{layer_id}"
+            }
+    
+    # Add layers in proper order
+    all_styles = get_all_vector_styles()
+    
+    for layer_id in LAYER_ORDER:
+        # Extract the layer name from the layer_id (e.g., "eno-cities-layer" -> "cities")
+        source_name = layer_id.replace("eno-", "").replace("-layer", "").replace("-labels", "")
+        
+        if source_name in all_styles:
+            for style_config in all_styles[source_name]:
+                if style_config["id"] == layer_id:
+                    # Only add if source exists
+                    source_id = f"eno-{source_name}"
+                    if source_id in style["sources"]:
+                        layer = {
+                            **style_config,
+                            "source": source_id
+                        }
+                        style["layers"].append(layer)
+    
+    return style
