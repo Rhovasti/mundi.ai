@@ -70,15 +70,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM node:20-bookworm AS frontend-builder
 WORKDIR /app/frontendts
 COPY frontendts/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm install
 ARG VITE_WEBSITE_DOMAIN
 ARG VITE_EMAIL_VERIFICATION
 COPY frontendts/ ./
 ENV VITE_WEBSITE_DOMAIN=$VITE_WEBSITE_DOMAIN
 ENV VITE_EMAIL_VERIFICATION=$VITE_EMAIL_VERIFICATION
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN npm run build && npm prune --production
+RUN VITE_WEBSITE_DOMAIN=${VITE_WEBSITE_DOMAIN} npx tsc -b && npx vite build && npm prune --production
 
 # final stage
 FROM tools AS final

@@ -248,7 +248,7 @@ export default function ProjectView() {
 
       {/* Interactive Map Section */}
       {roomId && project ? (
-        <DriftDBProvider api="/drift/" room={roomId}>
+        <DriftDBProvider api={`${import.meta.env.VITE_WEBSITE_DOMAIN}/drift/`} room={roomId}>
           <MapLibreMap
             mapId={versionId}
             height="100%"

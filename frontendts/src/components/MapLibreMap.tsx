@@ -1266,7 +1266,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         style: {
           version: 8,
           sources: {},
-          layers: []
+          layers: [],
+          glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf"
         }, // Start with empty style so map loads
         attributionControl: {
           compact: false
@@ -1489,7 +1490,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     if (!mapId || !jwt)
       return null;
 
-    return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
+    const backendUrl = import.meta.env.VITE_WEBSITE_DOMAIN;
+    const url = new URL(`/api/maps/ws/${mapId}/messages/updates?token=${jwt}`, backendUrl);
+    return url.toString().replace('http', wsProtocol);
   }, [mapId, wsProtocol, jwt]);
 
   const { lastMessage, readyState } = useWebSocket(wsUrl, {

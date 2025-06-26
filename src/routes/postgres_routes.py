@@ -1273,7 +1273,15 @@ async def upload_layer(
                     )
 
             # Upload file to S3/MinIO
-            s3_client.upload_file(temp_file_path, bucket_name, s3_key)
+            try:
+                s3_client.upload_file(temp_file_path, bucket_name, s3_key)
+                print(f"INFO: File {s3_key} uploaded to S3.")
+            except Exception as e:
+                print(f"ERROR: S3 upload failed for {s3_key}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"S3 upload failed: {str(e)}",
+                )
 
             # Generate a presigned URL for the file
             presigned_url = s3_client.generate_presigned_url(
@@ -1354,61 +1362,70 @@ async def upload_layer(
                     ds = None
             else:
                 # Get bounds from vector file and detect geometry type
-                with fiona.open(temp_file_path) as collection:
-                    try:
-                        # Fiona bounds are returned as (minx, miny, maxx, maxy)
-                        bounds = list(collection.bounds)
-                        # Get feature count
-                        feature_count = len(collection)
+                try:
+                    with fiona.open(temp_file_path) as collection:
+                        print(f"INFO: Opened vector file with Fiona: {temp_file_path}")
+                        try:
+                            # Fiona bounds are returned as (minx, miny, maxx, maxy)
+                            bounds = list(collection.bounds)
+                            # Get feature count
+                            feature_count = len(collection)
 
-                        # Detect geometry type
-                        # Try to get the geometry type from schema
-                        if collection.schema and "geometry" in collection.schema:
-                            geom_type = collection.schema["geometry"]
-                            # Normalize geometry type names to lowercase
-                            geometry_type = (
-                                geom_type.lower() if geom_type else "unknown"
+                            # Detect geometry type
+                            # Try to get the geometry type from schema
+                            if collection.schema and "geometry" in collection.schema:
+                                geom_type = collection.schema["geometry"]
+                                # Normalize geometry type names to lowercase
+                                geometry_type = (
+                                    geom_type.lower() if geom_type else "unknown"
+                                )
+
+                                # If there are features, check the first feature for actual geometry type
+                                if len(collection) > 0:
+                                    first_feature = next(iter(collection))
+                                    if (
+                                        first_feature
+                                        and "geometry" in first_feature
+                                        and "type" in first_feature["geometry"]
+                                    ):
+                                        actual_type = first_feature["geometry"][
+                                            "type"
+                                        ].lower()
+                                        # Update if the actual type is more specific
+                                        if actual_type and actual_type != "null":
+                                            geometry_type = actual_type
+                        except Exception as e:
+                            print(f"ERROR: Error detecting geometry type/bounds: {str(e)}")
+                            geometry_type = "unknown"
+
+                        # Check if we need to transform coordinates to EPSG:4326
+                        src_crs = collection.crs
+                        crs_string = src_crs.to_string()
+
+                        # Check if CRS is not EPSG:4326
+                        if (
+                            src_crs
+                            and "EPSG:4326" not in crs_string
+                            and "WGS84" not in crs_string
+                            and bounds is not None
+                        ):
+                            # Create transformer from source CRS to WGS84 (EPSG:4326)
+                            transformer = Transformer.from_crs(
+                                src_crs, "EPSG:4326", always_xy=True
                             )
 
-                            # If there are features, check the first feature for actual geometry type
-                            if len(collection) > 0:
-                                first_feature = next(iter(collection))
-                                if (
-                                    first_feature
-                                    and "geometry" in first_feature
-                                    and "type" in first_feature["geometry"]
-                                ):
-                                    actual_type = first_feature["geometry"][
-                                        "type"
-                                    ].lower()
-                                    # Update if the actual type is more specific
-                                    if actual_type and actual_type != "null":
-                                        geometry_type = actual_type
-                    except Exception as e:
-                        print(f"Error detecting geometry type: {str(e)}")
-                        geometry_type = "unknown"
+                            # Transform the bounds
+                            xmin, ymin = transformer.transform(bounds[0], bounds[1])
+                            xmax, ymax = transformer.transform(bounds[2], bounds[3])
 
-                    # Check if we need to transform coordinates to EPSG:4326
-                    src_crs = collection.crs
-                    crs_string = src_crs.to_string()
-
-                    # Check if CRS is not EPSG:4326
-                    if (
-                        src_crs
-                        and "EPSG:4326" not in crs_string
-                        and "WGS84" not in crs_string
-                        and bounds is not None
-                    ):
-                        # Create transformer from source CRS to WGS84 (EPSG:4326)
-                        transformer = Transformer.from_crs(
-                            src_crs, "EPSG:4326", always_xy=True
-                        )
-
-                        # Transform the bounds
-                        xmin, ymin = transformer.transform(bounds[0], bounds[1])
-                        xmax, ymax = transformer.transform(bounds[2], bounds[3])
-
-                        bounds = [xmin, ymin, xmax, ymax]
+                            bounds = [xmin, ymin, xmax, ymax]
+                        print(f"INFO: Bounds and geometry type detected: {bounds}, {geometry_type}")
+                except Exception as e:
+                    print(f"ERROR: Fiona open failed for {temp_file_path}: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to process vector file: {str(e)}",
+                    )
 
             # For vector layers, add geometry_type and feature_count to metadata
             if layer_type == "vector":
