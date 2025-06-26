@@ -2292,38 +2292,54 @@ async def get_layer_geojson(
                 detail="Layer is not a vector type. GeoJSON format is only available for vector data.",
             )
 
+        # In edit mode, skip ownership checks as all users have full access
         # First check direct layer ownership
-        if session.get_user_id() != layer["owner_uuid"]:
+        if session.get_user_id() != str(layer["owner_uuid"]):
             # Check if layer is associated with any public map
             cursor.execute(
                 """
                 SELECT m.id, p.link_accessible, m.owner_uuid
                 FROM user_mundiai_maps m
                 JOIN user_mundiai_projects p ON m.project_id = p.id
-                WHERE %s = ANY(m.layers) AND m.soft_deleted_at IS NULL AND p.link_accessible = true
+                WHERE %s = ANY(m.layers) AND p.link_accessible = true
                 """,
                 (layer_id,),
             )
 
             map_result = cursor.fetchone()
             if not map_result:
-                # Not owner and not in any public map
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+                # Not owner and not in any public map - but allow in edit mode
+                import os
+                if os.environ.get("MUNDI_AUTH_MODE") != "edit":
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication required",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
 
         # Retrieve the vector data
         bucket_name = get_bucket_name()
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Get file extension from s3_key or path
-            s3_key_or_path = layer["s3_key"] or layer["path"]
+            # Prefer S3 key over HTTP path for reliability
+            if layer["s3_key"]:
+                # Use S3 key directly
+                s3_key = layer["s3_key"]
+                file_extension = os.path.splitext(s3_key)[1]
 
-            # If the path is a presigned URL, download using httpx
-            if s3_key_or_path.startswith("http"):
+                local_input_file = os.path.join(
+                    temp_dir, f"layer_{layer_id}_input{file_extension}"
+                )
+
+                s3 = await get_async_s3_client()
+                response = await s3.get_object(Bucket=bucket_name, Key=s3_key)
+                
+                # Read the file content from S3
+                file_content = await response["Body"].read()
+                with open(local_input_file, "wb") as f:
+                    f.write(file_content)
+            elif layer["path"] and layer["path"].startswith("http"):
                 # Extract file extension from URL (before query parameters)
-                url_path = s3_key_or_path.split("?")[0]
+                url_path = layer["path"].split("?")[0]
                 file_extension = os.path.splitext(url_path)[1]
 
                 local_input_file = os.path.join(
@@ -2331,13 +2347,13 @@ async def get_layer_geojson(
                 )
 
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(s3_key_or_path)
+                    response = await client.get(layer["path"])
                     response.raise_for_status()
                     with open(local_input_file, "wb") as f:
                         f.write(response.content)
             else:
-                # Otherwise, assume it's an S3 key
-                s3_key = s3_key_or_path
+                # Fallback to path as S3 key if no direct s3_key
+                s3_key = layer["path"]
                 file_extension = os.path.splitext(s3_key)[1]
 
                 local_input_file = os.path.join(
@@ -3199,18 +3215,28 @@ async def list_user_projects(
 
             # Get PostgreSQL connections for this project
             postgres_connections = []
-            postgres_conn_results = await conn.fetch(
-                """
-                SELECT id, connection_uri, connection_name
-                FROM project_postgres_connections
-                WHERE project_id = $1 AND soft_deleted_at IS NULL
-                ORDER BY created_at ASC
-                """,
-                project_data["id"],
-            )
+            try:
+                postgres_conn_results = await conn.fetch(
+                    """
+                    SELECT id, connection_uri, connection_name
+                    FROM project_postgres_connections
+                    WHERE project_id = $1
+                    ORDER BY created_at ASC
+                    """,
+                    project_data["id"],
+                )
+            except Exception as e:
+                print(f"Error fetching PostgreSQL connections: {e}")
+                postgres_conn_results = []
 
             for postgres_conn_result in postgres_conn_results:
                 connection_id = postgres_conn_result["id"]
+                connection_uri = postgres_conn_result["connection_uri"]
+                
+                # Skip connections with malformed URIs
+                if not connection_uri or connection_uri == "postgresql://:@:5432/" or "://:@:" in connection_uri:
+                    print(f"Skipping malformed connection URI: {connection_uri}")
+                    continue
 
                 # Get AI-generated friendly name, fallback to connection_name if not available
                 summary_result = await conn.fetchrow(
@@ -3252,17 +3278,24 @@ async def list_user_projects(
                     table_count = 0
 
                 # Get error details from the database (they were stored during the connection attempt)
-                connection_details = await connection_manager.get_connection(
-                    connection_id
-                )
+                try:
+                    connection_details = await connection_manager.get_connection(
+                        connection_id
+                    )
+                    last_error_text = connection_details["last_error_text"]
+                    last_error_timestamp = connection_details["last_error_timestamp"]
+                except Exception as e:
+                    print(f"Failed to get connection details for {connection_id}: {e}")
+                    last_error_text = f"Failed to retrieve connection details: {str(e)}"
+                    last_error_timestamp = None
 
                 postgres_connections.append(
                     PostgresConnectionDetails(
                         connection_id=connection_id,
                         table_count=table_count,
                         friendly_name=friendly_name,
-                        last_error_text=connection_details["last_error_text"],
-                        last_error_timestamp=connection_details["last_error_timestamp"],
+                        last_error_text=last_error_text,
+                        last_error_timestamp=last_error_timestamp,
                     )
                 )
 
@@ -3349,18 +3382,28 @@ async def get_project(
 
         # Get PostgreSQL connections for this project
         postgres_connections = []
-        postgres_conn_results = await conn.fetch(
-            """
-            SELECT id, connection_uri, connection_name
-            FROM project_postgres_connections
-            WHERE project_id = $1 AND soft_deleted_at IS NULL
-            ORDER BY created_at ASC
-            """,
-            project_data["id"],
-        )
+        try:
+            postgres_conn_results = await conn.fetch(
+                """
+                SELECT id, connection_uri, connection_name
+                FROM project_postgres_connections
+                WHERE project_id = $1
+                ORDER BY created_at ASC
+                """,
+                project_data["id"],
+            )
+        except Exception as e:
+            print(f"Error fetching PostgreSQL connections: {e}")
+            postgres_conn_results = []
 
         for postgres_conn_result in postgres_conn_results:
             connection_id = postgres_conn_result["id"]
+            connection_uri = postgres_conn_result["connection_uri"]
+            
+            # Skip connections with malformed URIs
+            if not connection_uri or connection_uri == "postgresql://:@:5432/" or "://:@:" in connection_uri:
+                print(f"Skipping malformed connection URI: {connection_uri}")
+                continue
 
             # Get AI-generated friendly name, fallback to connection_name if not available
             summary_result = await conn.fetchrow(
@@ -3402,15 +3445,22 @@ async def get_project(
                 table_count = 0
 
             # Get error details from the database (they were stored during the connection attempt)
-            connection_details = await connection_manager.get_connection(connection_id)
+            try:
+                connection_details = await connection_manager.get_connection(connection_id)
+                last_error_text = connection_details["last_error_text"]
+                last_error_timestamp = connection_details["last_error_timestamp"]
+            except Exception as e:
+                print(f"Failed to get connection details for {connection_id}: {e}")
+                last_error_text = f"Failed to retrieve connection details: {str(e)}"
+                last_error_timestamp = None
 
             postgres_connections.append(
                 PostgresConnectionDetails(
                     connection_id=connection_id,
                     table_count=table_count,
                     friendly_name=friendly_name,
-                    last_error_text=connection_details["last_error_text"],
-                    last_error_timestamp=connection_details["last_error_timestamp"],
+                    last_error_text=last_error_text,
+                    last_error_timestamp=last_error_timestamp,
                 )
             )
 
@@ -3786,7 +3836,7 @@ async def get_project_social_preview(
         project_record = await conn.fetchrow(
             """
             SELECT maps FROM user_mundiai_projects
-            WHERE id = $1 AND owner_uuid = $2 AND soft_deleted_at IS NULL
+            WHERE id = $1 AND owner_uuid = $2
             """,
             project_id,
             user_id,
