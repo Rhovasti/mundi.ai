@@ -18,6 +18,7 @@ import uuid
 import psycopg2
 import math
 import secrets
+import base64
 from psycopg2.extras import RealDictCursor
 from fastapi import (
     APIRouter,
@@ -61,6 +62,7 @@ from src.utils import (
     process_zip_with_shapefile,
     get_async_s3_client,
 )
+import aiohttp
 import fiona
 import duckdb
 from osgeo import gdal
@@ -898,6 +900,58 @@ async def get_available_basemaps(
 ):
     """Get list of available basemap styles."""
     return {"styles": base_map.get_available_styles()}
+
+
+@basemap_router.get(
+    "/tiles/{style}/{z}/{x}/{y}.png",
+    operation_id="proxy_basemap_tiles",
+)
+async def proxy_basemap_tiles(
+    style: str,
+    z: int,
+    x: int,
+    y: int,
+):
+    """Proxy basemap tiles to avoid CORS issues."""
+    
+    if style == "opengeofiction":
+        tile_url = f"https://tile.opengeofiction.net/ogf-carto/{z}/{x}/{y}.png"
+    else:
+        # Fallback to OSM for unknown styles
+        tile_url = f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(tile_url) as response:
+                if response.status == 200:
+                    tile_data = await response.read()
+                    return Response(
+                        content=tile_data,
+                        media_type="image/png",
+                        headers={
+                            "Cache-Control": "public, max-age=86400",  # Cache for 1 day
+                            "Access-Control-Allow-Origin": "*",
+                        }
+                    )
+                else:
+                    # Return transparent 1x1 PNG for missing tiles
+                    transparent_png = base64.b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+                    )
+                    return Response(
+                        content=transparent_png,
+                        media_type="image/png"
+                    )
+    except Exception as e:
+        print(f"Error proxying tile {tile_url}: {e}")
+        # Return transparent 1x1 PNG on error
+        transparent_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        )
+        return Response(
+            content=transparent_png,
+            media_type="image/png"
+        )
 
 
 async def get_map_style_internal(
@@ -3970,5 +4024,5 @@ async def delete_project(
         }
 
 
-# Export both routers
-__all__ = ["router", "layer_router", "project_router"]
+# Export all routers
+__all__ = ["router", "layer_router", "project_router", "basemap_router"]
