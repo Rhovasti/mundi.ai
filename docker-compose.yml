@@ -22,8 +22,8 @@ services:
         condition: service_completed_successfully
       postgresdb:
         condition: service_healthy
-      driftdb:
-        condition: service_healthy
+      # driftdb:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
       qgis-processing:
@@ -103,25 +103,27 @@ services:
       timeout: 5s
       retries: 10
 
-  driftdb:
-    platform: linux/amd64
-    image: ${DRIFTDB_IMAGE:-driftdb-local}
-    build:
-      context: ./driftdb
-      dockerfile: driftdb-server/Dockerfile
-      x-bake:
-        tags:
-          - driftdb-local
-    environment:
-      # - USE_HTTPS_WSS=1
-      - HOSTNAME_OVERRIDE=localhost:5173
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "cat /proc/net/tcp | grep '1F90'"]
-      interval: 1s
-      timeout: 2s
-      retries: 5
-      start_period: 3s
+  # DriftDB is optional for real-time collaboration
+  # Comment out if you don't need collaborative features
+  # driftdb:
+  #   platform: linux/amd64
+  #   image: ${DRIFTDB_IMAGE:-driftdb-local}
+  #   build:
+  #     context: ./driftdb
+  #     dockerfile: Dockerfile
+  #     x-bake:
+  #       tags:
+  #         - driftdb-local
+  #   environment:
+  #     # - USE_HTTPS_WSS=1
+  #     - HOSTNAME_OVERRIDE=localhost:5173
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "cat /proc/net/tcp | grep '1F90'"]
+  #     interval: 1s
+  #     timeout: 2s
+  #     retries: 5
+  #     start_period: 3s
 
   redis:
     image: redis:alpine

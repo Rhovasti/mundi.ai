@@ -1,0 +1,78 @@
+# Docker Compose override for local development with LLM support
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.local.yml up
+
+services:
+  app:
+    env_file:
+      - .env
+    environment:
+      - MUNDI_AUTH_MODE=edit
+      - OPENAI_API_KEY=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
+      - OPENAI_BASE_URL=https://openrouter.ai/api/v1
+      - OPENAI_MODEL=z-ai/glm-4.5
+      - DRIFTDB_SERVER_URL=http://driftdb:8080
+    volumes:
+      # Mount source code for hot-reloading during development
+      - ./src:/app/src
+      - ./alembic:/app/alembic
+      - ./conftest.py:/app/conftest.py
+      - ./test_fixtures:/app/test_fixtures
+      # Persist uploaded files
+      - ./data/uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "
+        echo 'Starting Mundi.ai in development mode...' &&
+        echo 'LLM Configuration:' &&
+        if [ -n \"$$OPENAI_API_KEY\" ] && [ \"$$OPENAI_API_KEY\" != \"ollama\" ]; then
+          echo '  Using OpenAI API';
+        elif [ \"$$OPENAI_API_KEY\" = \"ollama\" ]; then
+          echo '  Using Ollama at $$OPENAI_BASE_URL';
+        else
+          echo '  WARNING: No LLM configured. AI features will be limited.';
+        fi &&
+        echo 'Access the application at: http://localhost:8000' &&
+        uvicorn src.wsgi:app --host 0.0.0.0 --port 8000 --reload --log-level info
+      "
+
+  # Optional: Ollama service for local LLM
+  # Uncomment if you want to run Ollama in Docker instead of on host
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./data/ollama:/root/.ollama
+  #   command: serve
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+
+  postgresdb:
+    ports:
+      - "5432:5432"  # Expose PostgreSQL for direct access if needed
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      # Initialize with PostGIS extension
+      - ./scripts/init-postgis.sql:/docker-entrypoint-initdb.d/init-postgis.sql:ro
+
+  minio:
+    ports:
+      - "9000:9000"   # MinIO API
+      - "9001:9001"   # MinIO Console
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+      - MINIO_DEFAULT_BUCKETS=test-bucket
+      - MINIO_CONSOLE_ADDRESS=:9001
+    volumes:
+      - ./data/minio:/data
+
+  redis:
+    ports:
+      - "6379:6379"  # Expose Redis for debugging
+    volumes:
+      - ./data/redis:/data
