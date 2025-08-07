@@ -24,6 +24,7 @@ from fastapi import (
     status,
     Request,
     Depends,
+    Query,
 )
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -58,7 +59,7 @@ import subprocess
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
 from src.routes.layer_router import describe_layer_internal
 from ..structures import get_async_db_connection, async_conn
-from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
+from ..dependencies.base_map import BaseMapProvider, CustomBasemapProvider, get_base_map_provider
 from ..dependencies.postgis import get_postgis_provider
 from ..dependencies.layer_describer import LayerDescriber, get_layer_describer
 from ..dependencies.postgres_connection import (
@@ -707,8 +708,53 @@ async def get_map_style(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+    # If a specific basemap is requested, create a CustomBasemapProvider
+    if basemap and basemap not in ['openstreetmap']:
+        # Fetch custom basemaps from database
+        async with async_conn("get_map_style.fetch_basemaps") as conn:
+            # Get the map's project_id
+            project_result = await conn.fetchrow(
+                "SELECT project_id FROM user_mundiai_maps WHERE id = $1",
+                map_id
+            )
+            project_id = project_result["project_id"] if project_result else None
+            
+            # Build query to get accessible basemaps
+            conditions = ["(is_default = true OR is_public = true)"]
+            params = []
+            
+            if session:
+                # Add user-specific basemaps
+                user_id = session.get_user_id()
+                conditions.append(f"owner_uuid = ${len(params) + 1}")
+                params.append(user_id)
+                
+            if project_id:
+                # Add project-specific basemaps
+                param_num = len(params) + 1
+                conditions.append(f"project_id = ${param_num}")
+                params.append(project_id)
+            
+            where_clause = " OR ".join(conditions)
+            query = f"""
+                SELECT id, name, type, config, attribution, min_zoom, max_zoom
+                FROM custom_basemaps 
+                WHERE {where_clause}
+                ORDER BY is_default DESC, is_public DESC, created_at DESC
+            """
+            
+            if params:
+                results = await conn.fetch(query, *params)
+            else:
+                results = await conn.fetch(query)
+            
+            custom_basemaps = [dict(row) for row in results]
+        
+        # Create provider with custom basemaps
+        base_map = CustomBasemapProvider(custom_basemaps)
+    
     return await get_map_style_internal(
-        map_id, base_map, only_show_inline_sources, override_layers, basemap
+        map_id, base_map, only_show_inline_sources, override_layers, basemap, session
     )
 
 
@@ -718,10 +764,82 @@ async def get_map_style(
     response_class=StarletteJSONResponse,
 )
 async def get_available_basemaps(
-    base_map: BaseMapProvider = Depends(get_base_map_provider),
+    project_id: Optional[str] = Query(None, description="Project ID to get basemaps for"),
+    session: Optional[UserContext] = Depends(verify_session_optional),
 ):
-    """Get list of available basemap styles."""
-    return {"styles": base_map.get_available_styles()}
+    """Get list of available basemap styles including custom basemaps."""
+    # Fetch custom basemaps from database
+    custom_basemaps = []
+    
+    async with async_conn("get_available_basemaps") as conn:
+        # Build query to get accessible basemaps
+        conditions = ["(is_default = true OR is_public = true)"]
+        params = []
+        
+        if session:
+            # Add user-specific basemaps
+            user_id = session.get_user_id()
+            conditions.append(f"owner_uuid = ${len(params) + 1}")
+            params.append(user_id)
+            
+        if project_id:
+            # Add project-specific basemaps
+            param_num = len(params) + 1
+            conditions.append(f"project_id = ${param_num}")
+            params.append(project_id)
+        
+        where_clause = " OR ".join(conditions)
+        query = f"""
+            SELECT id, name, type, config, attribution, min_zoom, max_zoom
+            FROM custom_basemaps 
+            WHERE {where_clause}
+            ORDER BY is_default DESC, is_public DESC, created_at DESC
+        """
+        
+        if params:
+            results = await conn.fetch(query, *params)
+        else:
+            results = await conn.fetch(query)
+        
+        custom_basemaps = [dict(row) for row in results]
+    
+    # Create provider with custom basemaps
+    provider = CustomBasemapProvider(custom_basemaps)
+    
+    # Get all available styles including presets and custom
+    styles = provider.get_available_styles()
+    
+    # Return detailed information about each style
+    style_details = []
+    
+    # Add default OpenStreetMap
+    style_details.append({
+        "id": "openstreetmap",
+        "name": "OpenStreetMap",
+        "type": "default",
+        "preset": True
+    })
+    
+    # Add presets
+    for preset_name in provider._get_preset_names():
+        display_name = preset_name.replace("-", " ").title()
+        style_details.append({
+            "id": preset_name,
+            "name": display_name,
+            "type": "preset",
+            "preset": True
+        })
+    
+    # Add custom basemaps
+    for basemap in custom_basemaps:
+        style_details.append({
+            "id": basemap["id"],
+            "name": basemap["name"],
+            "type": "custom",
+            "preset": False
+        })
+    
+    return {"styles": styles, "details": style_details}
 
 
 async def get_map_style_internal(
@@ -730,6 +848,7 @@ async def get_map_style_internal(
     only_show_inline_sources: bool = False,
     override_layers: Optional[str] = None,
     basemap: Optional[str] = None,
+    session: Optional[UserContext] = None,
 ):
     # Get vector layers for this map from the database
     async with async_conn("get_map_style_internal.fetch_layers") as conn:

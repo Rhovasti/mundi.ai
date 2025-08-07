@@ -36,6 +36,7 @@ from src.routes import (
 )
 from src.routes.postgres_routes import basemap_router
 from src.routes.layer_router import layer_router
+from src.routes.basemap_routes import custom_basemap_router
 # from fastapi_mcp import FastApiMCP
 
 
@@ -104,6 +105,11 @@ app.include_router(
     basemap_router,
     prefix="/api/basemaps",
     tags=["Basemaps"],
+)
+app.include_router(
+    custom_basemap_router,
+    prefix="/api/basemaps",
+    tags=["Custom Basemaps"],
 )
 app.include_router(
     conversation_routes.router,

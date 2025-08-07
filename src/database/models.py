@@ -64,6 +64,7 @@ class MundiProject(Base):
     postgres_connections = relationship(
         "ProjectPostgresConnection", back_populates="project"
     )
+    custom_basemaps = relationship("CustomBasemap", back_populates="project")
 
 
 class MundiMap(Base):
@@ -147,6 +148,38 @@ class ProjectPostgresSummary(Base):
 
     # Relationships
     connection = relationship("ProjectPostgresConnection", back_populates="summaries")
+
+
+class CustomBasemap(Base):
+    __tablename__ = "custom_basemaps"
+
+    id = Column(String(12), primary_key=True)  # starts with B
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    type = Column(String(50), nullable=False)  # 'xyz', 'wms', 'wmts', 'style_json'
+    config = Column(JSONB, nullable=False)  # Stores all configuration
+    thumbnail_url = Column(Text)
+    owner_uuid = Column(UUID, nullable=False)
+    project_id = Column(String(12), ForeignKey("user_mundiai_projects.id"))
+    is_public = Column(Boolean, default=False)
+    is_default = Column(Boolean, default=False)  # If true, available to all users
+    attribution = Column(Text)
+    min_zoom = Column(Integer, default=0)
+    max_zoom = Column(Integer, default=22)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+    # Relationships
+    project = relationship("MundiProject", back_populates="custom_basemaps")
 
 
 class MapLayer(Base):

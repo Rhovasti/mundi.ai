@@ -65,14 +65,16 @@ const KUE_MESSAGE_STYLE = `
 
 const SWAP_XY = new Matrix4().set(0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
-// Custom Globe Control class
+// Custom Globe Control class with dropdown menu
 class GlobeControl implements IControl {
   private _container: HTMLDivElement | undefined;
-  private _availableBasemaps: string[];
+  private _dropdown: HTMLDivElement | undefined;
+  private _availableBasemaps: any[];
   private _currentBasemap: string;
   private _onBasemapChange: (basemap: string) => void;
+  private _isOpen: boolean = false;
 
-  constructor(availableBasemaps: string[], currentBasemap: string, onBasemapChange: (basemap: string) => void) {
+  constructor(availableBasemaps: any[], currentBasemap: string, onBasemapChange: (basemap: string) => void) {
     this._availableBasemaps = availableBasemaps;
     this._currentBasemap = currentBasemap;
     this._onBasemapChange = onBasemapChange;
@@ -81,12 +83,13 @@ class GlobeControl implements IControl {
   onAdd(_map: MLMap): HTMLElement {
     this._container = document.createElement('div');
     this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    this._container.style.position = 'relative';
 
     const button = document.createElement('button');
     button.className = 'maplibregl-ctrl-globe';
     button.type = 'button';
-    button.title = 'Toggle satellite basemap';
-    button.setAttribute('aria-label', 'Toggle satellite basemap');
+    button.title = 'Select basemap';
+    button.setAttribute('aria-label', 'Select basemap');
 
     // Create globe icon (SVG)
     button.innerHTML = `
@@ -102,9 +105,80 @@ class GlobeControl implements IControl {
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
 
-    button.addEventListener('click', this._onClickGlobe.bind(this));
+    // Create dropdown menu
+    this._dropdown = document.createElement('div');
+    this._dropdown.className = 'basemap-dropdown';
+    this._dropdown.style.position = 'absolute';
+    this._dropdown.style.top = '100%';
+    this._dropdown.style.right = '0';
+    this._dropdown.style.marginTop = '4px';
+    this._dropdown.style.background = 'white';
+    this._dropdown.style.border = '1px solid #ccc';
+    this._dropdown.style.borderRadius = '4px';
+    this._dropdown.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+    this._dropdown.style.minWidth = '200px';
+    this._dropdown.style.maxHeight = '400px';
+    this._dropdown.style.overflowY = 'auto';
+    this._dropdown.style.display = 'none';
+    this._dropdown.style.zIndex = '1000';
+
+    // Populate dropdown with basemap options
+    this._availableBasemaps.forEach((basemap) => {
+      const item = document.createElement('div');
+      item.className = 'basemap-item';
+      item.style.padding = '8px 12px';
+      item.style.cursor = 'pointer';
+      item.style.fontSize = '14px';
+      item.style.borderBottom = '1px solid #eee';
+      
+      const isSelected = basemap.id === this._currentBasemap || basemap === this._currentBasemap;
+      if (isSelected) {
+        item.style.background = '#f0f0f0';
+        item.style.fontWeight = 'bold';
+      }
+      
+      // Handle both string and object basemaps
+      const name = typeof basemap === 'string' ? basemap : basemap.name || basemap.id;
+      const type = typeof basemap === 'object' ? basemap.type : '';
+      
+      item.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span>${name}</span>
+          ${isSelected ? '<span style="color: #4CAF50;">✓</span>' : ''}
+        </div>
+        ${type ? `<div style="font-size: 11px; color: #666; margin-top: 2px;">${type}</div>` : ''}
+      `;
+      
+      item.addEventListener('mouseenter', () => {
+        if (!isSelected) item.style.background = '#f5f5f5';
+      });
+      
+      item.addEventListener('mouseleave', () => {
+        if (!isSelected) item.style.background = 'white';
+      });
+      
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const basemapId = typeof basemap === 'string' ? basemap : basemap.id;
+        this._currentBasemap = basemapId;
+        this._onBasemapChange(basemapId);
+        this._closeDropdown();
+      });
+      
+      this._dropdown.appendChild(item);
+    });
+
+    button.addEventListener('click', this._toggleDropdown.bind(this));
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (this._container && !this._container.contains(e.target as Node)) {
+        this._closeDropdown();
+      }
+    });
 
     this._container.appendChild(button);
+    this._container.appendChild(this._dropdown);
     return this._container;
   }
 
@@ -114,20 +188,106 @@ class GlobeControl implements IControl {
     }
   }
 
-  private _onClickGlobe(): void {
-    if (!this._availableBasemaps.length) return;
+  private _toggleDropdown(): void {
+    if (this._isOpen) {
+      this._closeDropdown();
+    } else {
+      this._openDropdown();
+    }
+  }
 
-    // Cycle to next basemap
-    const currentIndex = this._availableBasemaps.indexOf(this._currentBasemap);
-    const nextIndex = (currentIndex + 1) % this._availableBasemaps.length;
-    const nextBasemap = this._availableBasemaps[nextIndex];
+  private _openDropdown(): void {
+    if (this._dropdown) {
+      this._dropdown.style.display = 'block';
+      this._isOpen = true;
+    }
+  }
 
-    this._currentBasemap = nextBasemap;
-    this._onBasemapChange(nextBasemap);
+  private _closeDropdown(): void {
+    if (this._dropdown) {
+      this._dropdown.style.display = 'none';
+      this._isOpen = false;
+    }
   }
 
   updateBasemap(basemap: string): void {
     this._currentBasemap = basemap;
+    this._updateDropdownSelection();
+  }
+  
+  updateAvailableBasemaps(basemaps: any[]): void {
+    this._availableBasemaps = basemaps;
+    this._rebuildDropdown();
+  }
+  
+  private _updateDropdownSelection(): void {
+    if (!this._dropdown) return;
+    
+    const items = this._dropdown.querySelectorAll('.basemap-item');
+    items.forEach((item, index) => {
+      const basemap = this._availableBasemaps[index];
+      const isSelected = (typeof basemap === 'string' ? basemap : basemap.id) === this._currentBasemap;
+      
+      const element = item as HTMLElement;
+      if (isSelected) {
+        element.style.background = '#f0f0f0';
+        element.style.fontWeight = 'bold';
+      } else {
+        element.style.background = 'white';
+        element.style.fontWeight = 'normal';
+      }
+    });
+  }
+  
+  private _rebuildDropdown(): void {
+    // Rebuild dropdown content when basemaps change
+    if (this._dropdown) {
+      this._dropdown.innerHTML = '';
+      
+      this._availableBasemaps.forEach((basemap) => {
+        const item = document.createElement('div');
+        item.className = 'basemap-item';
+        item.style.padding = '8px 12px';
+        item.style.cursor = 'pointer';
+        item.style.fontSize = '14px';
+        item.style.borderBottom = '1px solid #eee';
+        
+        const isSelected = (typeof basemap === 'string' ? basemap : basemap.id) === this._currentBasemap;
+        if (isSelected) {
+          item.style.background = '#f0f0f0';
+          item.style.fontWeight = 'bold';
+        }
+        
+        const name = typeof basemap === 'string' ? basemap : basemap.name || basemap.id;
+        const type = typeof basemap === 'object' ? basemap.type : '';
+        
+        item.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span>${name}</span>
+            ${isSelected ? '<span style="color: #4CAF50;">✓</span>' : ''}
+          </div>
+          ${type ? `<div style="font-size: 11px; color: #666; margin-top: 2px;">${type}</div>` : ''}
+        `;
+        
+        item.addEventListener('mouseenter', () => {
+          if (!isSelected) item.style.background = '#f5f5f5';
+        });
+        
+        item.addEventListener('mouseleave', () => {
+          if (!isSelected) item.style.background = 'white';
+        });
+        
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const basemapId = typeof basemap === 'string' ? basemap : basemap.id;
+          this._currentBasemap = basemapId;
+          this._onBasemapChange(basemapId);
+          this._closeDropdown();
+        });
+        
+        this._dropdown.appendChild(item);
+      });
+    }
   }
 }
 
@@ -1006,12 +1166,22 @@ export default function MapLibreMap({
   useEffect(() => {
     const fetchAvailableBasemaps = async () => {
       try {
-        const response = await fetch('/api/basemaps/available');
+        const url = new URL('/api/basemaps/available', window.location.origin);
+        // Add project_id if available (from map's project)
+        const response = await fetch(url.toString());
         if (response.ok) {
           const data = await response.json();
-          setAvailableBasemaps(data.styles);
-          if (data.styles.length > 0) {
-            setCurrentBasemap(data.styles[0]); // Set first style as default
+          // Use details if available, otherwise fall back to styles array
+          if (data.details) {
+            setAvailableBasemaps(data.details);
+            if (data.details.length > 0) {
+              setCurrentBasemap(data.details[0].id); // Set first style as default
+            }
+          } else {
+            setAvailableBasemaps(data.styles);
+            if (data.styles.length > 0) {
+              setCurrentBasemap(data.styles[0]); // Set first style as default
+            }
           }
         }
       } catch (error) {
@@ -1055,6 +1225,13 @@ export default function MapLibreMap({
       globeControlRef.current.updateBasemap(currentBasemap);
     }
   }, [currentBasemap]);
+  
+  // Update globe control when available basemaps change
+  useEffect(() => {
+    if (globeControlRef.current && availableBasemaps.length > 0) {
+      globeControlRef.current.updateAvailableBasemaps(availableBasemaps);
+    }
+  }, [availableBasemaps]);
 
   // Effect to log when attribute table is opened/closed
   useEffect(() => {
